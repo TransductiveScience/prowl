@@ -1,10 +1,12 @@
 <div align="center">
 
+<img src="public/media/prowl_logo.png" alt="Prowl" width="128" />
+
 # Prowl
 
 **Your second monitor while AI writes the code.**
 
-[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](https://github.com/neur0map/prowl/releases)
+[![Version](https://img.shields.io/badge/version-0.4.2-blue.svg)](https://github.com/neur0map/prowl/releases)
 [![Beta](https://img.shields.io/badge/status-beta-orange.svg)](#)
 [![License](https://img.shields.io/badge/license-BSL--1.0-green.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-18%2B-brightgreen.svg)](https://nodejs.org)
@@ -16,21 +18,15 @@
 
 <br />
 
-## See Prowl in Action
-
-<video src="https://github.com/neur0map/prowl/raw/main/public/media/prowl.mp4" controls width="800"></video>
-
-<br />
-
 ### Focus Graph
 
 <img src="public/media/focus-graph.png" alt="Prowl Focus Graph" width="800" />
 
 <br />
 
-### Code Editor View
+### Code Inspector
 
-<img src="public/media/code.png" alt="Prowl Code Editor" width="800" />
+<img src="public/media/code.png" alt="Prowl Code Inspector" width="800" />
 
 </div>
 
@@ -105,7 +101,7 @@ Four layers running in parallel:
 |---------|-------------|
 | **GitHub import** | Paste a repo URL, explore without cloning |
 | **ZIP support** | Drag and drop archives |
-| **Community detection** | Leiden algorithm clusters related code |
+| **Community detection** | Louvain algorithm clusters related code |
 | **Process tracing** | Trace execution paths through call graphs |
 | **Snapshots** | Serialized with msgpackr, integrity verified via HMAC |
 
