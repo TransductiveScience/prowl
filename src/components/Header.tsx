@@ -112,7 +112,7 @@ export const Header = ({ onFocusNode, onRefreshGraph, onOpenRoadmap, onOpenFolde
           <>
             <button
               onClick={onOpenFolder}
-              className="flex items-center gap-1.5 px-2.5 py-1 glass-subtle rounded-md text-[12px] text-text-secondary hover:text-text-primary hover:bg-white/[0.1] transition-colors group"
+              className="flex items-center gap-1.5 px-2.5 py-1 glass-subtle rounded-lg text-[12px] text-text-secondary hover:text-text-primary hover:bg-white/[0.1] transition-colors group"
               title="Open another folder (⌘O)"
             >
               <span className="w-1.5 h-1.5 bg-node-function rounded-full opacity-70 group-hover:hidden" />
@@ -120,7 +120,7 @@ export const Header = ({ onFocusNode, onRefreshGraph, onOpenRoadmap, onOpenFolde
               <span className="truncate max-w-[180px]">{projectName}</span>
             </button>
             {loadedFromSnapshot && (
-              <div className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] text-text-muted bg-white/[0.04] border border-white/[0.06]">
+              <div className="flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] text-text-muted bg-white/[0.04] border border-white/[0.06]">
                 <Database className="w-3 h-3" />
                 Cached
               </div>
@@ -128,7 +128,7 @@ export const Header = ({ onFocusNode, onRefreshGraph, onOpenRoadmap, onOpenFolde
             {onRefreshGraph && (
               <button
                 onClick={onRefreshGraph}
-                className="w-6 h-6 flex items-center justify-center rounded-md text-text-muted hover:text-text-primary hover:bg-white/[0.08] transition-colors"
+                className="w-6 h-6 flex items-center justify-center rounded-lg text-text-muted hover:text-text-primary hover:bg-white/[0.08] transition-colors"
                 title="Refresh graph layout"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
@@ -139,7 +139,7 @@ export const Header = ({ onFocusNode, onRefreshGraph, onOpenRoadmap, onOpenFolde
       </div>
 
       <div className="flex-1 max-w-sm mx-4 relative" ref={searchRef} style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-        <div className="flex items-center gap-2 px-3 py-1.5 glass-subtle rounded-md transition-all focus-within:border-accent/50">
+        <div className="flex items-center gap-2 px-3 py-1.5 glass-subtle rounded-lg transition-all focus-within:border-accent/50">
           <Search className="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
           <input
             ref={inputRef}
@@ -155,13 +155,13 @@ export const Header = ({ onFocusNode, onRefreshGraph, onOpenRoadmap, onOpenFolde
             onKeyDown={handleKeyDown}
             className="flex-1 bg-transparent border-none outline-none text-[13px] text-text-primary placeholder:text-text-muted"
           />
-          <kbd className="px-1.5 py-0.5 rounded text-[10px] text-text-muted font-mono bg-white/[0.06] border border-white/[0.1]">
+          <kbd className="px-1.5 py-0.5 rounded-md text-[10px] text-text-muted font-mono bg-white/[0.06] border border-white/[0.1]">
             ⌘K
           </kbd>
         </div>
 
         {isSearchOpen && searchQuery.trim() && (
-          <div className="absolute top-full left-0 right-0 mt-1 bg-deep border border-white/[0.15] rounded-lg shadow-lg overflow-hidden z-50">
+          <div className="absolute top-full left-0 right-0 mt-1 bg-deep border border-white/[0.15] rounded-lg shadow-lg overflow-hidden z-50" style={{ animation: 'scaleIn 0.15s ease-out' }}>
             {searchResults.length === 0 ? (
               <div className="px-3 py-2.5 text-[12px] text-text-muted">
                 No results for "{searchQuery}"
@@ -201,7 +201,7 @@ export const Header = ({ onFocusNode, onRefreshGraph, onOpenRoadmap, onOpenFolde
 
         <button
           onClick={onOpenRoadmap}
-          className="w-7 h-7 flex items-center justify-center rounded-md text-text-muted hover:text-text-primary hover:bg-white/[0.08] transition-colors"
+          className="w-7 h-7 flex items-center justify-center rounded-lg text-text-muted hover:text-text-primary hover:bg-white/[0.08] transition-colors"
           title="Roadmap"
         >
           <Rocket className="w-4 h-4" />
@@ -209,7 +209,7 @@ export const Header = ({ onFocusNode, onRefreshGraph, onOpenRoadmap, onOpenFolde
 
         <button
           onClick={() => setSettingsPanelOpen(true)}
-          className="w-7 h-7 flex items-center justify-center rounded-md text-text-muted hover:text-text-primary hover:bg-white/[0.08] transition-colors"
+          className="w-7 h-7 flex items-center justify-center rounded-lg text-text-muted hover:text-text-primary hover:bg-white/[0.08] transition-colors"
           title="Settings"
         >
           <Settings className="w-4 h-4" />
@@ -218,7 +218,7 @@ export const Header = ({ onFocusNode, onRefreshGraph, onOpenRoadmap, onOpenFolde
         <button
           onClick={() => setRightPanelOpen(!isRightPanelOpen)}
           className={`
-            w-7 h-7 flex items-center justify-center rounded-md transition-colors
+            w-7 h-7 flex items-center justify-center rounded-lg transition-colors
             ${isRightPanelOpen
               ? 'bg-white/[0.1] text-text-primary'
               : 'text-text-muted hover:text-text-primary hover:bg-white/[0.08]'

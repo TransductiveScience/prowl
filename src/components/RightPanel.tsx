@@ -255,7 +255,7 @@ export const RightPanel = ({ onFocusNode }: RightPanelProps) => {
 
   return (
     <aside
-      className="flex flex-col bg-void border-l border-white/[0.08] animate-fade-in relative z-30 flex-shrink-0"
+      className="flex flex-col bg-void border-l border-white/[0.08] animate-slide-in-right relative z-30 flex-shrink-0"
       style={{ width: `${panelWidth}%`, minWidth: 320 }}
     >
       <div

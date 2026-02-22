@@ -1,11 +1,13 @@
 import * as pty from 'node-pty'
 import { BrowserWindow } from 'electron'
 import { homedir } from 'os'
+import { existsSync } from 'fs'
 
 export interface TerminalInstance {
   id: string
   pty: pty.IPty
   name: string
+  cwd: string
 }
 
 export class TerminalManager {
@@ -19,16 +21,33 @@ export class TerminalManager {
 
   create(cwd?: string): string {
     const id = `term-${++this.counter}`
-    const shell = process.env.SHELL || (process.platform === 'win32' ? 'powershell.exe' : '/bin/bash')
-    const resolvedCwd = cwd || homedir()
 
-    // Clean env: remove vars that conflict with nvm/shell init
-    const cleanEnv = { ...process.env }
+    // Resolve shell — Electron main process may not inherit SHELL from GUI launch
+    const candidates = [
+      process.env.SHELL,
+      '/bin/zsh',    // macOS default
+      '/bin/bash',   // universal fallback
+    ].filter(Boolean) as string[]
+    const shell = candidates.find(s => existsSync(s))
+      || (process.platform === 'win32' ? 'powershell.exe' : '/bin/bash')
+
+    // Resolve cwd — fall back to home if the path doesn't exist
+    let resolvedCwd = cwd || homedir()
+    if (!existsSync(resolvedCwd)) resolvedCwd = homedir()
+
+    // Build clean env: strip undefined values and vars that conflict with nvm/shell init
+    const cleanEnv: Record<string, string> = {}
+    for (const [k, v] of Object.entries(process.env)) {
+      if (v !== undefined) cleanEnv[k] = v
+    }
     delete cleanEnv.npm_config_prefix
     delete cleanEnv.npm_config_loglevel
     delete cleanEnv.NODE_ENV
 
-    const ptyProcess = pty.spawn(shell, [], {
+    // Spawn as login shell so .zshrc / .bashrc / .profile are sourced
+    const shellArgs = process.platform === 'win32' ? [] : ['-l']
+
+    const ptyProcess = pty.spawn(shell, shellArgs, {
       name: 'xterm-256color',
       cols: 80,
       rows: 24,
@@ -37,13 +56,12 @@ export class TerminalManager {
         ...cleanEnv,
         TERM: 'xterm-256color',
         COLORTERM: 'truecolor',
-      } as Record<string, string>,
+      },
     })
 
-    // Detect process name from the first output or the shell name
     const name = shell.split('/').pop() || 'shell'
 
-    const instance: TerminalInstance = { id, pty: ptyProcess, name }
+    const instance: TerminalInstance = { id, pty: ptyProcess, name, cwd: resolvedCwd }
     this.terminals.set(id, instance)
 
     ptyProcess.onData((data) => {
@@ -85,6 +103,15 @@ export class TerminalManager {
     const term = this.terminals.get(id)
     const raw = term?.pty.process || term?.name || 'shell'
     return raw.split('/').pop() || 'shell'
+  }
+
+  setCwd(id: string, cwd: string): void {
+    const term = this.terminals.get(id)
+    if (term) term.cwd = cwd
+  }
+
+  getCwd(id: string): string {
+    return this.terminals.get(id)?.cwd || homedir()
   }
 
   killAll(): void {

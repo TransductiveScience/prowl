@@ -1,9 +1,9 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
-import { X, PanelLeftClose, FileCode, Check, AlertCircle } from 'lucide-react'
+import { X, PanelLeftClose, Check, AlertCircle } from 'lucide-react'
 import Editor, { type Monaco } from '@monaco-editor/react'
 import type { editor } from 'monaco-editor'
 import { useAppState } from '../hooks/useAppState'
-import { getFileIcon } from '../lib/file-icons'
+import { LanguageIcon } from './LanguageIcon'
 
 function getLanguage(filePath: string): string {
   const name = filePath.split('/').pop()?.toLowerCase() || ''
@@ -373,7 +373,7 @@ export const CodeEditorPanel = ({ onFocusNode }: CodeEditorPanelProps) => {
 
   return (
     <aside
-      className="h-full bg-[#141416] border-r border-white/[0.06] flex flex-col relative"
+      className="h-full bg-[#141416] border border-white/[0.08] flex flex-col relative rounded-xl overflow-hidden shadow-lg"
       style={{ width: panelWidth }}
     >
       <div
@@ -397,7 +397,7 @@ export const CodeEditorPanel = ({ onFocusNode }: CodeEditorPanelProps) => {
                 }
               `}
             >
-              <FileCode size={11} className="shrink-0" style={{ color: getFileIcon(tab.filePath).color }} />
+              <LanguageIcon filename={tab.filePath} size={13} />
               <span className="truncate">{tab.name}</span>
               {tab.content !== tab.originalContent && (
                 <span className="w-1.5 h-1.5 rounded-full bg-violet-400 shrink-0" title="Unsaved changes" />
@@ -414,7 +414,7 @@ export const CodeEditorPanel = ({ onFocusNode }: CodeEditorPanelProps) => {
 
         <button
           onClick={() => { setSelectedNode(null); setCodePanelOpen(false); }}
-          className="p-1.5 rounded hover:bg-white/[0.06] text-text-muted hover:text-text-secondary transition-colors shrink-0 mx-1"
+          className="p-1.5 rounded-lg hover:bg-white/[0.06] text-text-muted hover:text-text-secondary transition-colors shrink-0 mx-1"
           title="Close editor (Esc)"
         >
           <PanelLeftClose size={13} />
@@ -486,7 +486,7 @@ export const CodeEditorPanel = ({ onFocusNode }: CodeEditorPanelProps) => {
             <>
               <span className="font-mono uppercase tracking-wider">{activeTab.language}</span>
               {!isLocalFolder && (
-                <span className="px-1.5 py-0.5 rounded bg-white/[0.04] text-[9px]">read-only</span>
+                <span className="px-1.5 py-0.5 rounded-md bg-white/[0.04] text-[9px]">read-only</span>
               )}
             </>
           )}

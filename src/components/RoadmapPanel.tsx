@@ -364,10 +364,10 @@ export const RoadmapPanel = ({ isOpen, onClose }: RoadmapPanelProps) => {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ animation: 'backdropIn 0.15s ease-out' }}>
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
 
-      <div className="relative w-full max-w-4xl max-h-[85vh] mx-4 bg-[#1c1c1e]/98 backdrop-blur-xl border border-white/[0.08] rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+      <div className="relative w-full max-w-4xl max-h-[85vh] mx-4 bg-[#1c1c1e]/98 backdrop-blur-xl border border-white/[0.08] rounded-2xl shadow-2xl overflow-hidden flex flex-col" style={{ animation: 'scaleIn 0.2s ease-out' }}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.08] bg-void/50">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-accent/20 to-accent/5 flex items-center justify-center">

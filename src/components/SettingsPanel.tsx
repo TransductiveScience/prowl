@@ -352,10 +352,10 @@ export const SettingsPanel = ({ isOpen, onClose, onSettingsSaved }: SettingsPane
   const p = settings.activeProvider;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ animation: 'backdropIn 0.15s ease-out' }}>
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
 
-      <div className="relative w-full max-w-[440px] mx-4 bg-[#1c1c1e]/95 backdrop-blur-2xl border border-white/[0.06] rounded-xl shadow-2xl overflow-hidden max-h-[85vh] flex flex-col">
+      <div className="relative w-full max-w-[440px] mx-4 bg-[#1c1c1e]/95 backdrop-blur-2xl border border-white/[0.06] rounded-xl shadow-2xl overflow-hidden max-h-[85vh] flex flex-col" style={{ animation: 'scaleIn 0.2s ease-out' }}>
 
         <div className="flex items-center justify-between px-5 py-3 border-b border-white/[0.06]">
           <span className="text-[13px] font-medium text-text-primary">AI Provider</span>

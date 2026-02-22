@@ -53,6 +53,9 @@
 
   /* Animations — restrained */
   --animate-fade-in: fade-in 0.15s ease-out;
+  --animate-slide-in-left: slideInLeft 0.2s ease-out;
+  --animate-slide-in-right: slideInRight 0.2s ease-out;
+  --animate-slide-up: slideUp 0.2s ease-out;
 
   /* Shadows — no glows, soft elevation */
   --shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.2);
@@ -69,6 +72,31 @@
 @keyframes fadeSlideIn {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-10px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(10px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes backdropIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -238,7 +266,7 @@ body {
 .chat-prose code:not([class*="language-"]) {
   padding: 0.15em 0.4em;
   background: rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
+  border-radius: 6px;
   font-family: var(--font-mono);
   font-size: 0.85em;
   color: #f5f5f7 !important;
@@ -255,7 +283,7 @@ body {
 /* Code blocks */
 .chat-prose pre {
   margin: 0.875em 0;
-  border-radius: 6px;
+  border-radius: 10px;
   overflow: hidden;
 }
 
@@ -265,7 +293,7 @@ body {
   padding: 0.5em 1em;
   border-left: 2px solid rgba(255, 255, 255, 0.2);
   background: rgba(255, 255, 255, 0.04);
-  border-radius: 0 4px 4px 0;
+  border-radius: 0 8px 8px 0;
   color: var(--color-text-secondary);
 }
 

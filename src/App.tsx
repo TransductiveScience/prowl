@@ -367,7 +367,7 @@ const AppContent = () => {
 
           {/* Code Editor Panel (overlay) */}
           {isCodePanelOpen && (codeReferences.length > 0 || !!selectedNode) && (
-            <div className="absolute inset-y-0 left-0 z-30 pointer-events-auto">
+            <div className="absolute inset-y-2 left-2 z-30 pointer-events-auto animate-slide-in-left">
               <CodeEditorPanel onFocusNode={handleFocusNode} />
             </div>
           )}
