@@ -4,9 +4,26 @@ import tailwindcss from '@tailwindcss/vite'
 import wasm from 'vite-plugin-wasm'
 import topLevelAwait from 'vite-plugin-top-level-await'
 import { viteStaticCopy } from 'vite-plugin-static-copy'
-import commonjs from '@rollup/plugin-commonjs'
 import { resolve } from 'path'
 import { readFileSync } from 'fs'
+import type { Plugin } from 'vite'
+
+/** Wrap the CJS `events` polyfill as a proper ESM module with named exports */
+function eventsEsmPlugin(): Plugin {
+  return {
+    name: 'events-esm-shim',
+    enforce: 'pre',
+    resolveId(source) {
+      if (source === 'events') return '\0events-esm'
+    },
+    load(id) {
+      if (id === '\0events-esm') {
+        const code = readFileSync(resolve(__dirname, 'node_modules/events/events.js'), 'utf-8')
+        return `var module = { exports: {} };\nvar exports = module.exports;\n(function(module, exports) {\n${code}\n})(module, exports);\nvar EventEmitter = module.exports;\nexport { EventEmitter };\nexport default EventEmitter;\n`
+      }
+    },
+  }
+}
 
 const pkg = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf-8'))
 
@@ -40,6 +57,10 @@ export default defineConfig({
     root: '.',
     build: {
       outDir: 'dist/renderer',
+      commonjsOptions: {
+        transformMixedEsModules: true,
+        include: [/node_modules/],
+      },
       rollupOptions: {
         input: {
           index: resolve(__dirname, 'index.html')
@@ -55,6 +76,7 @@ export default defineConfig({
       },
     },
     plugins: [
+      eventsEsmPlugin(),
       react(),
       tailwindcss(),
       wasm(),
@@ -66,16 +88,6 @@ export default defineConfig({
             dest: 'assets'
           }
         ]
-      }),
-      commonjs({
-        transformMixedEsModules: true,
-        exclude: [
-          /node_modules\/react/,
-          /node_modules\/react-dom/,
-          /node_modules\/@babel\/runtime/,
-          /node_modules\/@swc\/helpers/,
-          /node_modules\/@vite\/js/,
-        ],
       }),
     ],
     resolve: {
@@ -164,9 +176,7 @@ export default defineConfig({
     worker: {
       format: 'es' as const,
       plugins: () => [
-        commonjs({
-          transformMixedEsModules: true,
-        }),
+        eventsEsmPlugin(),
         wasm(),
         topLevelAwait(),
       ],
