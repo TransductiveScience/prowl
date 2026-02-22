@@ -32,4 +32,6 @@ export {
 
 export { buildAnalysisTools } from './tools';
 
+export { translateNLToCypher, type CypherTranslationResult } from './cypher-translator';
+
 export * from './types';

@@ -4,7 +4,9 @@ import Graph from 'graphology';
 import FA2Layout from 'graphology-layout-forceatlas2/worker';
 import forceAtlas2 from 'graphology-layout-forceatlas2';
 import noverlap from 'graphology-layout-noverlap';
+import { animateNodes } from 'sigma/utils';
 import EdgeCurveProgram from '@sigma/edge-curve';
+import { NodeTriangleProgram } from '../rendering/node-triangle';
 import { NodeDisplayAttrs, EdgeDisplayAttrs } from '../lib/graph-adapter';
 import type { NodeAnimation } from './useAppState';
 import type { EdgeType } from '../lib/constants';
@@ -220,6 +222,75 @@ function applyAnimation(
   }
 }
 
+function computeRepelTargets(
+  graph: Graph<NodeDisplayAttrs, EdgeDisplayAttrs>,
+  selectedNodeId: string,
+  restPositions: Map<string, { x: number; y: number }>,
+): Record<string, { x: number; y: number }> {
+  const focusSet = new Set<string>();
+  focusSet.add(selectedNodeId);
+  graph.forEachNeighbor(selectedNodeId, (nid) => focusSet.add(nid));
+
+  // Compute bounding box for scale calibration
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  restPositions.forEach(({ x, y }) => {
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  });
+  const graphSpan = Math.max(maxX - minX, maxY - minY, 1);
+  const scale = graphSpan / 800;
+
+  const STRENGTH = 8000 * scale;
+  const MAX_PUSH = 80 * scale;
+  const MIN_PUSH = 8 * scale;
+
+  // Pre-collect focus node rest positions
+  const focusPositions: { x: number; y: number }[] = [];
+  focusSet.forEach((fid) => {
+    const pos = restPositions.get(fid);
+    if (pos) focusPositions.push(pos);
+  });
+
+  const targets: Record<string, { x: number; y: number }> = {};
+
+  restPositions.forEach((rest, nid) => {
+    if (focusSet.has(nid)) {
+      targets[nid] = { x: rest.x, y: rest.y };
+      return;
+    }
+
+    // Find nearest focus node
+    let nearestDist = Infinity;
+    let nearestFocus = focusPositions[0];
+    for (const fp of focusPositions) {
+      const dx = rest.x - fp.x;
+      const dy = rest.y - fp.y;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      if (d < nearestDist) {
+        nearestDist = d;
+        nearestFocus = fp;
+      }
+    }
+
+    if (nearestDist < 0.01) {
+      // Essentially overlapping — push in a random direction
+      const angle = Math.random() * Math.PI * 2;
+      targets[nid] = { x: rest.x + MIN_PUSH * Math.cos(angle), y: rest.y + MIN_PUSH * Math.sin(angle) };
+      return;
+    }
+
+    const push = Math.min(MAX_PUSH, Math.max(MIN_PUSH, STRENGTH / nearestDist));
+    const dirX = (rest.x - nearestFocus.x) / nearestDist;
+    const dirY = (rest.y - nearestFocus.y) / nearestDist;
+
+    targets[nid] = { x: rest.x + dirX * push, y: rest.y + dirY * push };
+  });
+
+  return targets;
+}
+
 export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
   const containerRef = useRef<HTMLDivElement>(null);
   const sigmaRef = useRef<Sigma | null>(null);
@@ -232,6 +303,8 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
   const edgeFilterRef = useRef<EdgeType[] | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rafRef = useRef<number | null>(null);
+  const restPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const cancelRepelRef = useRef<(() => void) | null>(null);
   const [layoutActive, setLayoutActive] = useState(false);
   const [pickedNode, setPickedNodeState] = useState<string | null>(null);
 
@@ -268,14 +341,30 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
   }, [options.animatedNodes]);
 
   const setSelectedNode = useCallback((nodeId: string | null) => {
+    // Cancel any in-flight repel animation
+    if (cancelRepelRef.current) { cancelRepelRef.current(); cancelRepelRef.current = null; }
+
     pickedNodeRef.current = nodeId;
     setPickedNodeState(nodeId);
 
+    const graph = graphRef.current;
     const inst = sigmaRef.current;
     if (!inst) return;
 
-    const cam = inst.getCamera();
-    cam.animate({ ratio: cam.ratio * 1.0001 }, { duration: 50 });
+    if (nodeId && graph && restPositionsRef.current.size > 0 && !fa2Ref.current) {
+      const targets = computeRepelTargets(graph, nodeId, restPositionsRef.current);
+      cancelRepelRef.current = animateNodes(graph, targets, {
+        duration: 380, easing: 'quadraticOut',
+      });
+    } else if (!nodeId && graph && restPositionsRef.current.size > 0 && !fa2Ref.current) {
+      // Deselect: animate back to rest positions
+      const targets: Record<string, { x: number; y: number }> = {};
+      restPositionsRef.current.forEach((pos, nid) => { targets[nid] = pos; });
+      cancelRepelRef.current = animateNodes(graph, targets, {
+        duration: 350, easing: 'quadraticInOut',
+      });
+    }
+
     inst.refresh();
   }, []);
 
@@ -287,6 +376,7 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
 
     const renderer = new Sigma(graph, containerRef.current, {
       ...SIGMA_INIT,
+      nodeProgramClasses: { triangle: NodeTriangleProgram },
       edgeProgramClasses: { curved: EdgeCurveProgram },
       defaultDrawNodeHover: renderHoverTooltip,
 
@@ -350,16 +440,16 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
             const adjacent = g.hasEdge(nid, sel) || g.hasEdge(sel, nid);
             if (isSelf) {
               out.color = data.color;
-              out.size = sz * 1.8;
+              out.size = sz * 1.25;
               out.zIndex = 2;
               out.highlighted = true;
             } else if (adjacent) {
               out.color = data.color;
-              out.size = sz * 1.3;
+              out.size = sz * 1.1;
               out.zIndex = 1;
             } else {
-              out.color = dimColor(data.color, 0.25);
-              out.size = sz * 0.6;
+              out.color = dimColor(data.color, 0.45);
+              out.size = sz * 0.85;
               out.zIndex = 0;
             }
           }
@@ -419,8 +509,8 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
               out.size = Math.max(3, (data.size || 1) * 4);
               out.zIndex = 2;
             } else {
-              out.color = dimColor(data.color, 0.1);
-              out.size = 0.3;
+              out.color = dimColor(data.color, 0.15);
+              out.size = 0.4;
               out.zIndex = 0;
             }
           }
@@ -462,6 +552,9 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
     const n = graph.order;
     if (n === 0) return;
 
+    // Cancel any in-flight repel animation
+    if (cancelRepelRef.current) { cancelRepelRef.current(); cancelRepelRef.current = null; }
+
     if (fa2Ref.current) {
       fa2Ref.current.kill();
       fa2Ref.current = null;
@@ -483,6 +576,10 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
         fa2Ref.current.stop();
         fa2Ref.current = null;
         noverlap.assign(graph, OVERLAP_CLEANUP);
+        // Capture rest positions for magnetic repel
+        const restMap = new Map<string, { x: number; y: number }>();
+        graph.forEachNode((nid, attrs) => restMap.set(nid, { x: attrs.x, y: attrs.y }));
+        restPositionsRef.current = restMap;
         sigmaRef.current?.refresh();
         setLayoutActive(false);
       }
@@ -495,6 +592,7 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
 
     if (fa2Ref.current) { fa2Ref.current.kill(); fa2Ref.current = null; }
     if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+    restPositionsRef.current = new Map();
 
     graphRef.current = incoming;
     inst.setGraph(incoming);
@@ -550,6 +648,10 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
       const g = graphRef.current;
       if (g) {
         noverlap.assign(g, OVERLAP_CLEANUP);
+        // Capture rest positions for magnetic repel
+        const restMap = new Map<string, { x: number; y: number }>();
+        g.forEachNode((nid, attrs) => restMap.set(nid, { x: attrs.x, y: attrs.y }));
+        restPositionsRef.current = restMap;
         sigmaRef.current?.refresh();
       }
       setLayoutActive(false);

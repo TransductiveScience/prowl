@@ -18,6 +18,7 @@ export interface NodeDisplayAttrs {
   mass?: number;
   community?: number;
   communityColor?: string;
+  type?: string;
 }
 
 export interface EdgeDisplayAttrs {
@@ -144,6 +145,7 @@ export const toSigmaGraph = (
       endLine: node.properties.endLine,
       hidden: false,
       mass: computeNodeMass(node.label, nodeTotal),
+      type: node.label === 'Folder' ? 'triangle' : undefined,
     });
   });
 
@@ -201,6 +203,7 @@ export const toSigmaGraph = (
       mass: computeNodeMass(node.label, nodeTotal),
       community: communityIndex,
       communityColor: hasCommunity ? getModuleColor(communityIndex!) : undefined,
+      type: node.label === 'Folder' ? 'triangle' : undefined,
     });
   };
 

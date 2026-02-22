@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppStateProvider, useAppState } from './hooks/useAppState';
 import { DropZone } from './components/DropZone';
 import { LoadingOverlay } from './components/LoadingOverlay';
+import { SplashScreen } from './components/SplashScreen';
 import { Header } from './components/Header';
 import { GraphCanvas, GraphCanvasHandle } from './components/GraphCanvas';
 import { RightPanel } from './components/RightPanel';
@@ -14,6 +15,8 @@ import { TerminalDrawer } from './components/TerminalDrawer';
 import { UpdateBanner } from './components/UpdateBanner';
 import { FileEntry } from './services/zip';
 import { getActiveProviderConfig } from './core/llm/settings-service';
+
+const LAST_PROJECT_KEY = 'prowl-last-project';
 
 const AppContent = () => {
   const {
@@ -163,6 +166,7 @@ const AppContent = () => {
   const handleFolderLoad = useCallback(async (files: FileEntry[], folderPath: string) => {
     pendingFolderPathRef.current = folderPath;
     setProjectPath(folderPath);
+    localStorage.setItem(LAST_PROJECT_KEY, folderPath);
     const projectName = folderPath.split('/').filter(Boolean).pop() || 'project';
 
     setProjectName(projectName);
@@ -315,6 +319,44 @@ const AppContent = () => {
     openFolderRef.current = openFolder;
   }, [openFolder]);
 
+  // Clear remembered project when user returns to onboarding
+  useEffect(() => {
+    if (viewMode === 'onboarding' && !currentProjectPath) {
+      localStorage.removeItem(LAST_PROJECT_KEY);
+    }
+  }, [viewMode, currentProjectPath]);
+
+  // Auto-restore last project on cold start
+  const startupRanRef = useRef(false);
+  useEffect(() => {
+    if (viewMode !== 'startup' || startupRanRef.current) return;
+    startupRanRef.current = true;
+
+    const lastPath = localStorage.getItem(LAST_PROJECT_KEY);
+    const prowl = (window as any).prowl;
+
+    if (!lastPath || !prowl?.scanFolder) {
+      setViewMode('onboarding');
+      return;
+    }
+
+    // Async auto-restore
+    (async () => {
+      try {
+        const files: FileEntry[] = await prowl.scanFolder(lastPath);
+        if (files.length === 0) {
+          localStorage.removeItem(LAST_PROJECT_KEY);
+          setViewMode('onboarding');
+          return;
+        }
+        handleFolderLoad(files, lastPath);
+      } catch {
+        localStorage.removeItem(LAST_PROJECT_KEY);
+        setViewMode('onboarding');
+      }
+    })();
+  }, [viewMode, setViewMode, handleFolderLoad]);
+
   const handleFocusNode = useCallback((nodeId: string) => {
     graphCanvasRef.current?.focusNode(nodeId);
   }, []);
@@ -329,6 +371,10 @@ const AppContent = () => {
   }, [refreshLLMSettings, initializeAgent]);
 
   // Render based on view mode
+  if (viewMode === 'startup') {
+    return <SplashScreen />;
+  }
+
   if (viewMode === 'onboarding') {
     return (
       <>

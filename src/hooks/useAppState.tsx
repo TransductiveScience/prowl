@@ -22,7 +22,7 @@ export interface AgentWatcherState {
   logPath: string | null;
 }
 
-export type ViewMode = 'onboarding' | 'loading' | 'exploring';
+export type ViewMode = 'startup' | 'onboarding' | 'loading' | 'exploring';
 export type RightPanelTab = 'code' | 'chat';
 export type EmbeddingStatus = 'idle' | 'loading' | 'embedding' | 'indexing' | 'ready' | 'error';
 
@@ -188,7 +188,7 @@ const AppStateContext = createContext<AppState | null>(null);
 
 export const AppStateProvider = ({ children }: { children: ReactNode }) => {
   // View state
-  const [viewMode, setViewMode] = useState<ViewMode>('onboarding');
+  const [viewMode, setViewMode] = useState<ViewMode>('startup');
 
   // Graph data
   const [graph, setGraph] = useState<CodeGraph | null>(null);

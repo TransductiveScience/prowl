@@ -458,3 +458,22 @@ export const fetchOpenRouterModels = async (): Promise<Array<{ id: string; name:
   }
 };
 
+/** Pull the live model catalogue from Groq's API. */
+export const fetchGroqModels = async (apiKey?: string): Promise<Array<{ id: string; name: string }>> => {
+  if (!apiKey || apiKey.trim() === '') return [];
+  try {
+    const response = await fetch('https://api.groq.com/openai/v1/models', {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (!response.ok) throw new Error('Failed to fetch Groq models');
+    const data = await response.json();
+    return data.data.map((model: any) => ({
+      id: model.id,
+      name: model.id,
+    }));
+  } catch (error) {
+    console.error('Failed to retrieve Groq model list:', error);
+    return [];
+  }
+};
+

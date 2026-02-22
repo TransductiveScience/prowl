@@ -1,16 +1,19 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Database, Play, X, ChevronDown, ChevronUp, Loader2, Code, Table } from 'lucide-react';
+import { flushSync } from 'react-dom';
+import { Database, Play, X, ChevronDown, ChevronUp, Loader2, Code, Table, MessageSquare, AlertTriangle } from 'lucide-react';
 import { useAppState } from '../hooks/useAppState';
+import { getActiveProviderConfig, translateNLToCypher } from '../core/llm';
 
 const PRESET_QUERIES = [
-  { title: 'Functions', cypher: `MATCH (n:Function) RETURN n.id AS id, n.name AS name, n.filePath AS path LIMIT 50` },
-  { title: 'Classes', cypher: `MATCH (n:Class) RETURN n.id AS id, n.name AS name, n.filePath AS path LIMIT 50` },
-  { title: 'Interfaces', cypher: `MATCH (n:Interface) RETURN n.id AS id, n.name AS name, n.filePath AS path LIMIT 50` },
-  { title: 'Call Graph', cypher: `MATCH (a:File)-[r:CodeEdge {type: 'CALLS'}]->(b:Function) RETURN a.id AS id, a.name AS caller, b.name AS callee LIMIT 50` },
-  { title: 'Imports', cypher: `MATCH (a:File)-[r:CodeEdge {type: 'IMPORTS'}]->(b:File) RETURN a.id AS id, a.name AS from, b.name AS imports LIMIT 50` },
+  { title: 'Show all functions',        cypher: `MATCH (n:Function) RETURN n.id AS id, n.name AS name, n.filePath AS path LIMIT 50` },
+  { title: 'Show all classes',          cypher: `MATCH (n:Class) RETURN n.id AS id, n.name AS name, n.filePath AS path LIMIT 50` },
+  { title: 'Show all interfaces',       cypher: `MATCH (n:Interface) RETURN n.id AS id, n.name AS name, n.filePath AS path LIMIT 50` },
+  { title: 'Show the call graph',       cypher: `MATCH (a:File)-[r:CodeEdge {type: 'CALLS'}]->(b:Function) RETURN a.id AS id, a.name AS caller, b.name AS callee LIMIT 50` },
+  { title: 'Show import relationships', cypher: `MATCH (a:File)-[r:CodeEdge {type: 'IMPORTS'}]->(b:File) RETURN a.id AS id, a.name AS from, b.name AS imports LIMIT 50` },
 ];
 
 const NODE_ID_RE = /^(File|Function|Class|Method|Interface|Folder|CodeElement):/;
+const CYPHER_KEYWORDS = /^\s*(MATCH|CALL|RETURN|WITH|UNWIND|CREATE|MERGE|OPTIONAL)/i;
 
 function extractNodeIds(rows: Record<string, unknown>[]): string[] {
   const seen = new Set<string>();
@@ -88,11 +91,43 @@ export const QueryFAB = () => {
   const [inputText, setInputText] = useState('');
   const [executing, setExecuting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [warningMsg, setWarningMsg] = useState<string | null>(null);
   const [presetsVisible, setPresetsVisible] = useState(false);
   const [tableVisible, setTableVisible] = useState(true);
 
+  // NL mode state
+  const [mode, setMode] = useState<'nl' | 'cypher'>('nl');
+  const [generatedCypher, setGeneratedCypher] = useState<string | null>(null);
+  const [cypherVisible, setCypherVisible] = useState(false);
+  const [translating, setTranslating] = useState(false);
+  const [llmAvailable, setLlmAvailable] = useState(true);
+
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
+
+  // ── Refs for stable callback access ──
+  // These mirror the latest state so executeQuery never has stale closures.
+  const inputTextRef = useRef(inputText);
+  inputTextRef.current = inputText;
+
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+
+  const graphRef = useRef(graph);
+  graphRef.current = graph;
+
+  const generatedCypherRef = useRef(generatedCypher);
+  generatedCypherRef.current = generatedCypher;
+
+  // Check LLM availability on mount and when panel opens
+  useEffect(() => {
+    const config = getActiveProviderConfig();
+    const available = config !== null;
+    setLlmAvailable(available);
+    if (!available) {
+      setMode('cypher');
+    }
+  }, [panelOpen]);
 
   useEffect(() => {
     if (panelOpen && inputRef.current) inputRef.current.focus();
@@ -119,66 +154,173 @@ export const QueryFAB = () => {
     return () => document.removeEventListener('keydown', onEsc);
   }, [panelOpen]);
 
+  // ── Run a Cypher string against the database ──
+  // Extracted so both executeQuery and pickPreset can call it.
+  // Reads nothing from closure — all values passed as arguments.
+  const runCypher = useCallback(async (cypher: string) => {
+    const t0 = performance.now();
+    const rows = await runQuery(cypher);
+    const elapsed = performance.now() - t0;
+    const nodeIds = extractNodeIds(rows);
+    // flushSync required in Electron — automatic batching drops updates otherwise
+    flushSync(() => {
+      setQueryResult({ rows, nodeIds, executionTime: elapsed });
+      setHighlightedNodeIds(new Set(nodeIds));
+    });
+  }, [runQuery, setQueryResult, setHighlightedNodeIds]);
+
+  // ── Core execution — reads from refs, never stale ──
   const executeQuery = useCallback(async () => {
-    const trimmed = inputText.trim();
-    if (!trimmed || executing) return;
+    const trimmed = inputTextRef.current.trim();
+    const currentMode = modeRef.current;
+    const currentGraph = graphRef.current;
 
-    if (!graph) {
-      setErrorMsg('No project loaded. Load a project first.');
-      return;
-    }
-
-    const dbReady = await isDatabaseReady();
-    if (!dbReady) {
-      setErrorMsg('Database not ready. Please wait for loading to complete.');
-      return;
-    }
+    if (!trimmed) return;
 
     setExecuting(true);
     setErrorMsg(null);
-
-    const t0 = performance.now();
+    setWarningMsg(null);
 
     try {
-      const rows = await runQuery(trimmed);
-      const elapsed = performance.now() - t0;
-      const nodeIds = extractNodeIds(rows);
+      if (!currentGraph) {
+        setErrorMsg('No project loaded. Load a project first.');
+        return;
+      }
 
-      setQueryResult({ rows, nodeIds, executionTime: elapsed });
-      setHighlightedNodeIds(new Set(nodeIds));
+      const dbReady = await isDatabaseReady();
+      if (!dbReady) {
+        setErrorMsg('Database not ready. Please wait for loading to complete.');
+        return;
+      }
+
+      if (currentMode === 'cypher') {
+        await runCypher(trimmed);
+        return;
+      }
+
+      // ── NL mode: translate then execute ──
+      const config = getActiveProviderConfig();
+      if (!config) {
+        setErrorMsg('No AI model configured. Switch to Cypher mode or configure a model in Settings.');
+        return;
+      }
+
+      setTranslating(true);
+      setGeneratedCypher(null);
+
+      const result = await translateNLToCypher(trimmed, config);
+      setGeneratedCypher(result.cypher);
+      setCypherVisible(true);
+      setTranslating(false);
+
+      if (result.cannotTranslate) {
+        setWarningMsg("Can't translate this question. Try rephrasing or switch to Cypher.");
+        return;
+      }
+
+      if (!CYPHER_KEYWORDS.test(result.cypher)) {
+        setWarningMsg('The AI returned an unexpected response. Check the generated output below.');
+        return;
+      }
+
+      await runCypher(result.cypher);
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Query execution failed');
+      const msg = err instanceof Error ? err.message : 'Query execution failed';
+      setErrorMsg(msg);
       setQueryResult(null);
       setHighlightedNodeIds(new Set());
+      if (modeRef.current === 'nl') setCypherVisible(true);
     } finally {
-      setExecuting(false);
+      flushSync(() => {
+        setExecuting(false);
+        setTranslating(false);
+      });
     }
-  }, [inputText, executing, graph, isDatabaseReady, runQuery, setHighlightedNodeIds, setQueryResult]);
+  }, [isDatabaseReady, runCypher, setQueryResult, setHighlightedNodeIds]);
 
-  const onTextareaKey = (e: React.KeyboardEvent) => {
+  const onTextareaKey = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       executeQuery();
     }
-  };
+  }, [executeQuery]);
 
-  const pickPreset = (cypher: string) => {
-    setInputText(cypher);
+  const pickPreset = useCallback((preset: typeof PRESET_QUERIES[number]) => {
     setPresetsVisible(false);
+    setErrorMsg(null);
+    setWarningMsg(null);
+
+    const currentMode = modeRef.current;
+
+    if (currentMode === 'nl') {
+      // NL mode: show title as input, use stored Cypher directly (skip LLM)
+      setInputText(preset.title);
+      setGeneratedCypher(preset.cypher);
+      setCypherVisible(true);
+
+      // Execute the preset Cypher directly
+      (async () => {
+        const currentGraph = graphRef.current;
+        if (!currentGraph) {
+          setErrorMsg('No project loaded. Load a project first.');
+          return;
+        }
+
+        setExecuting(true);
+        try {
+          const dbReady = await isDatabaseReady();
+          if (!dbReady) {
+            setErrorMsg('Database not ready. Please wait for loading to complete.');
+            return;
+          }
+          await runCypher(preset.cypher);
+        } catch (err) {
+          setErrorMsg(err instanceof Error ? err.message : 'Query execution failed');
+          setQueryResult(null);
+          setHighlightedNodeIds(new Set());
+        } finally {
+          flushSync(() => { setExecuting(false); });
+        }
+      })();
+    } else {
+      // Cypher mode: insert raw Cypher into textarea
+      setInputText(preset.cypher);
+      inputRef.current?.focus();
+    }
+  }, [isDatabaseReady, runCypher, setQueryResult, setHighlightedNodeIds]);
+
+  const switchMode = useCallback((newMode: 'nl' | 'cypher') => {
+    const currentMode = modeRef.current;
+    if (newMode === currentMode) return;
+
+    // If switching to Cypher after a failed NL translation, pre-fill with generated Cypher
+    if (newMode === 'cypher' && generatedCypherRef.current) {
+      setInputText(generatedCypherRef.current);
+    } else if (newMode === 'nl' && CYPHER_KEYWORDS.test(inputTextRef.current.trim())) {
+      setInputText('');
+    }
+
+    setMode(newMode);
+    setErrorMsg(null);
+    setWarningMsg(null);
     inputRef.current?.focus();
-  };
+  }, []);
 
   const closePanel = () => {
     setPanelOpen(false);
     setPresetsVisible(false);
     clearQueryHighlights();
     setErrorMsg(null);
+    setWarningMsg(null);
   };
 
   const resetInput = () => {
     setInputText('');
+    setGeneratedCypher(null);
+    setCypherVisible(false);
     clearQueryHighlights();
     setErrorMsg(null);
+    setWarningMsg(null);
     inputRef.current?.focus();
   };
 
@@ -199,8 +341,14 @@ export const QueryFAB = () => {
     );
   }
 
-  const hasResults = queryResult && !errorMsg;
+  const hasResults = queryResult && !errorMsg && !warningMsg;
   const highlightCount = queryResult?.nodeIds.length ?? 0;
+  const isBusy = translating || executing;
+
+  // Button label
+  let buttonLabel = 'Run';
+  if (translating) buttonLabel = 'Translating...';
+  else if (executing) buttonLabel = 'Running...';
 
   return (
     <div
@@ -222,18 +370,79 @@ export const QueryFAB = () => {
         </button>
       </div>
 
-      <div className="p-3">
+      {/* Mode toggle */}
+      <div className="px-3 pt-3 pb-1">
+        <div className="inline-flex rounded-md bg-surface border border-border-subtle p-0.5">
+          <button
+            onClick={() => switchMode('nl')}
+            disabled={!llmAvailable}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium transition-all ${
+              mode === 'nl'
+                ? 'bg-violet-500/20 text-violet-300 shadow-sm'
+                : 'text-text-muted hover:text-text-secondary'
+            } ${!llmAvailable ? 'opacity-40 cursor-not-allowed' : ''}`}
+          >
+            <MessageSquare className="w-3 h-3" />
+            Ask
+          </button>
+          <button
+            onClick={() => switchMode('cypher')}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium transition-all ${
+              mode === 'cypher'
+                ? 'bg-violet-500/20 text-violet-300 shadow-sm'
+                : 'text-text-muted hover:text-text-secondary'
+            }`}
+          >
+            <Code className="w-3 h-3" />
+            Cypher
+          </button>
+        </div>
+      </div>
+
+      {/* No-LLM banner */}
+      {!llmAvailable && (
+        <div className="mx-3 mt-2 px-3 py-2 bg-amber-500/10 border border-amber-500/20 rounded-md flex items-center gap-2">
+          <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+          <p className="text-xs text-amber-300">Configure an AI model in Settings to enable natural language queries</p>
+        </div>
+      )}
+
+      <div className="p-3 pt-2">
         <div className="relative">
           <textarea
             ref={inputRef}
             value={inputText}
             onChange={e => setInputText(e.target.value)}
             onKeyDown={onTextareaKey}
-            placeholder="MATCH (n:Function) RETURN n.name, n.filePath LIMIT 10"
+            placeholder={
+              mode === 'nl'
+                ? "Ask about your code graph...\ne.g. \"Which files import utils?\" or \"Show me the largest classes\""
+                : "MATCH (n:Function)\nRETURN n.name, n.filePath\nLIMIT 10"
+            }
             rows={3}
-            className="w-full px-3 py-2.5 bg-surface border border-border-subtle rounded-lg text-sm font-mono text-text-primary placeholder:text-text-muted focus:border-violet-500/50 focus:ring-2 focus:ring-violet-500/20 outline-none resize-none transition-all"
+            className={`w-full px-3 py-2.5 bg-surface border border-border-subtle rounded-lg text-sm text-text-primary placeholder:text-text-muted/60 focus:border-violet-500/50 focus:ring-2 focus:ring-violet-500/20 outline-none resize-none transition-all ${
+              mode === 'cypher' ? 'font-mono' : ''
+            }`}
           />
         </div>
+
+        {/* Generated Cypher collapsible */}
+        {generatedCypher && mode === 'nl' && (
+          <div className="mt-2 border border-border-subtle rounded-lg overflow-hidden">
+            <button
+              onClick={() => setCypherVisible(v => !v)}
+              className="w-full flex items-center justify-between px-3 py-1.5 text-xs text-text-muted hover:text-text-secondary transition-colors bg-surface/50"
+            >
+              <span className="font-medium">Generated Cypher</span>
+              {cypherVisible ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            </button>
+            {cypherVisible && (
+              <pre className="px-3 py-2 text-xs font-mono text-text-secondary bg-surface/30 overflow-x-auto whitespace-pre-wrap break-all">
+                {generatedCypher}
+              </pre>
+            )}
+          </div>
+        )}
 
         <div className="flex items-center justify-between mt-3">
           <div className="relative">
@@ -247,11 +456,11 @@ export const QueryFAB = () => {
             </button>
 
             {presetsVisible && (
-              <div className="absolute bottom-full left-0 mb-2 w-64 py-1 bg-surface border border-border-subtle rounded-lg shadow-xl animate-fade-in">
+              <div className="absolute top-full left-0 mt-1 w-72 py-1 bg-surface border border-border-subtle rounded-lg shadow-xl z-50 animate-fade-in">
                 {PRESET_QUERIES.map(p => (
                   <button
                     key={p.title}
-                    onClick={() => pickPreset(p.cypher)}
+                    onClick={() => pickPreset(p)}
                     className="w-full px-3 py-2 text-left text-sm text-text-secondary hover:bg-hover hover:text-text-primary transition-colors"
                   >
                     {p.title}
@@ -272,17 +481,26 @@ export const QueryFAB = () => {
             )}
             <button
               onClick={executeQuery}
-              disabled={!inputText.trim() || executing}
+              disabled={!inputText.trim() || isBusy}
               className="flex items-center gap-1.5 px-4 py-1.5 bg-accent rounded-md text-white text-[13px] hover:bg-accent-dim disabled:opacity-40 disabled:cursor-not-allowed transition-all"
             >
-              {executing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-              <span>Run</span>
-              <kbd className="ml-1 px-1 py-0.5 bg-white/20 rounded text-[10px]">⌘↵</kbd>
+              {isBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+              <span>{buttonLabel}</span>
+              <kbd className="ml-1 px-1 py-0.5 bg-white/20 rounded text-[10px]">&#8984;&#9166;</kbd>
             </button>
           </div>
         </div>
       </div>
 
+      {/* Warning (amber) — e.g. CANNOT_TRANSLATE or non-Cypher response */}
+      {warningMsg && (
+        <div className="px-4 py-2 bg-amber-500/10 border-t border-amber-500/20 flex items-center gap-2">
+          <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+          <p className="text-xs text-amber-300">{warningMsg}</p>
+        </div>
+      )}
+
+      {/* Error (red) — API failures, query execution errors */}
       {errorMsg && (
         <div className="px-4 py-2 bg-red-500/10 border-t border-red-500/20">
           <p className="text-xs text-red-400 font-mono">{errorMsg}</p>
