@@ -32,3 +32,16 @@ export interface DiffResult {
   deleted: string[];
   isGitRepo: boolean;
 }
+
+export interface CollectAndSerializeResult {
+  data: Uint8Array;
+  meta: SnapshotMeta;
+  manifest: FileManifest;
+}
+
+export interface RestoreFromSnapshotResult {
+  nodes: GraphNode[];
+  relationships: GraphRelationship[];
+  fileContents: Record<string, string>;
+  hasEmbeddings: boolean;
+}

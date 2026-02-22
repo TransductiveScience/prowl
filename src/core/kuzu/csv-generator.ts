@@ -97,8 +97,11 @@ export interface CSVData {
 /** File nodes: id, name, filePath, content */
 const buildFileRows = (items: GraphNode[], sourceMap: Map<string, string>): string => {
   const out: string[] = ['id,name,filePath,content'];
+  const seen = new Set<string>();
   items.forEach((nd) => {
     if (nd.label !== 'File') return;
+    if (seen.has(nd.id)) return;
+    seen.add(nd.id);
     const body = resolveContent(nd, sourceMap);
     out.push(
       [quoteField(nd.id), quoteField(nd.properties.name || ''), quoteField(nd.properties.filePath || ''), quoteField(body)].join(','),
@@ -110,8 +113,11 @@ const buildFileRows = (items: GraphNode[], sourceMap: Map<string, string>): stri
 /** Folder nodes: id, name, filePath */
 const buildFolderRows = (items: GraphNode[]): string => {
   const out: string[] = ['id,name,filePath'];
+  const seen = new Set<string>();
   items.forEach((nd) => {
     if (nd.label !== 'Folder') return;
+    if (seen.has(nd.id)) return;
+    seen.add(nd.id);
     out.push(
       [quoteField(nd.id), quoteField(nd.properties.name || ''), quoteField(nd.properties.filePath || '')].join(','),
     );
@@ -126,8 +132,11 @@ const buildSymbolRows = (
   sourceMap: Map<string, string>,
 ): string => {
   const out: string[] = ['id,name,filePath,startLine,endLine,isExported,content'];
+  const seen = new Set<string>();
   items.forEach((nd) => {
     if (nd.label !== kind) return;
+    if (seen.has(nd.id)) return;
+    seen.add(nd.id);
     const body = resolveContent(nd, sourceMap);
     out.push([
       quoteField(nd.id),
@@ -145,8 +154,11 @@ const buildSymbolRows = (
 /** Community nodes: id, label, heuristicLabel, keywords, description, enrichedBy, cohesion, symbolCount */
 const buildCommunityRows = (items: GraphNode[]): string => {
   const out: string[] = ['id,label,heuristicLabel,keywords,description,enrichedBy,cohesion,symbolCount'];
+  const seen = new Set<string>();
   items.forEach((nd) => {
     if (nd.label !== 'Community') return;
+    if (seen.has(nd.id)) return;
+    seen.add(nd.id);
     const props = nd.properties as any;
     const kws: string[] = props.keywords || [];
     // KuzuDB STRING[] literal: ['a','b']
@@ -168,8 +180,11 @@ const buildCommunityRows = (items: GraphNode[]): string => {
 /** Process nodes: id, label, heuristicLabel, processType, stepCount, communities, entryPointId, terminalId */
 const buildProcessRows = (items: GraphNode[]): string => {
   const out: string[] = ['id,label,heuristicLabel,processType,stepCount,communities,entryPointId,terminalId'];
+  const seen = new Set<string>();
   items.forEach((nd) => {
     if (nd.label !== 'Process') return;
+    if (seen.has(nd.id)) return;
+    seen.add(nd.id);
     const props = nd.properties as any;
     const comms: string[] = props.communities || [];
     const commLiteral = '[' + comms.map((c: string) => "'" + c.replace(/'/g, "''") + "'").join(',') + ']';

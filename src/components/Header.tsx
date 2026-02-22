@@ -1,4 +1,4 @@
-import { Search, Settings, PanelRight, RefreshCw, Rocket, Database } from 'lucide-react';
+import { Search, Settings, PanelRight, RefreshCw, Rocket, Database, FolderOpen } from 'lucide-react';
 import { useAppState } from '../hooks/useAppState';
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { GraphNode } from '../core/graph/types';
@@ -20,9 +20,10 @@ interface HeaderProps {
   onFocusNode?: (nodeId: string) => void;
   onRefreshGraph?: () => void;
   onOpenRoadmap?: () => void;
+  onOpenFolder?: () => void;
 }
 
-export const Header = ({ onFocusNode, onRefreshGraph, onOpenRoadmap }: HeaderProps) => {
+export const Header = ({ onFocusNode, onRefreshGraph, onOpenRoadmap, onOpenFolder }: HeaderProps) => {
   const {
     projectName,
     graph,
@@ -109,10 +110,15 @@ export const Header = ({ onFocusNode, onRefreshGraph, onOpenRoadmap }: HeaderPro
 
         {projectName && (
           <>
-            <div className="flex items-center gap-1.5 px-2.5 py-1 glass-subtle rounded-md text-[12px] text-text-secondary">
-              <span className="w-1.5 h-1.5 bg-node-function rounded-full opacity-70" />
+            <button
+              onClick={onOpenFolder}
+              className="flex items-center gap-1.5 px-2.5 py-1 glass-subtle rounded-md text-[12px] text-text-secondary hover:text-text-primary hover:bg-white/[0.1] transition-colors group"
+              title="Open another folder (⌘O)"
+            >
+              <span className="w-1.5 h-1.5 bg-node-function rounded-full opacity-70 group-hover:hidden" />
+              <FolderOpen className="w-3 h-3 hidden group-hover:block" />
               <span className="truncate max-w-[180px]">{projectName}</span>
-            </div>
+            </button>
             {loadedFromSnapshot && (
               <div className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] text-text-muted bg-white/[0.04] border border-white/[0.06]">
                 <Database className="w-3 h-3" />

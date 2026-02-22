@@ -95,6 +95,7 @@ const ensureVectorIndex = async (
       `CALL CREATE_VECTOR_INDEX('CodeEmbedding', 'code_embedding_idx', 'embedding', metric := 'cosine')`
     );
   } catch (err) {
+    // Index may already exist (e.g. restored from snapshot) — non-fatal
     if (import.meta.env.DEV) {
       console.warn('Could not create vector index (may already exist):', err);
     }
@@ -163,16 +164,29 @@ export const runEmbeddingPipeline = async (
       return;
     }
 
+    // Clear existing embeddings before re-persisting
+    try {
+      await executeQuery('MATCH (e:CodeEmbedding) DELETE e');
+    } catch { /* table may be empty or missing */ }
+
+    // Deduplicate nodes by ID (upstream graph may contain duplicates)
+    const deduped = new Map<string, typeof nodes[0]>();
+    for (const nd of nodes) {
+      if (!deduped.has(nd.id)) deduped.set(nd.id, nd);
+    }
+    const uniqueNodes = Array.from(deduped.values());
+    const nodeCount2 = uniqueNodes.length;
+
     // Phase 3 -- batch embed
     const chunkSize = cfg.batchSize;
-    const numChunks = Math.ceil(nodeCount / chunkSize);
+    const numChunks = Math.ceil(nodeCount2 / chunkSize);
     let completed = 0;
 
     emitProgress(onProgress, {
       phase: 'embedding',
       percent: 20,
       nodesProcessed: 0,
-      totalNodes: nodeCount,
+      totalNodes: nodeCount2,
       currentBatch: 0,
       totalBatches: numChunks,
     });
@@ -180,8 +194,8 @@ export const runEmbeddingPipeline = async (
     let chunkIdx = 0;
     while (chunkIdx < numChunks) {
       const lo = chunkIdx * chunkSize;
-      const hi = Math.min(lo + chunkSize, nodeCount);
-      const chunk = nodes.slice(lo, hi);
+      const hi = Math.min(lo + chunkSize, nodeCount2);
+      const chunk = uniqueNodes.slice(lo, hi);
 
       const texts = prepareBatchTexts(chunk, cfg);
       const vectors = await embedBatch(texts);
@@ -194,13 +208,13 @@ export const runEmbeddingPipeline = async (
       await persistEmbeddings(executeWithReusedStatement, entries);
 
       completed += chunk.length;
-      const phasePct = 20 + (completed / nodeCount) * 70;
+      const phasePct = 20 + (completed / nodeCount2) * 70;
 
       emitProgress(onProgress, {
         phase: 'embedding',
         percent: Math.round(phasePct),
         nodesProcessed: completed,
-        totalNodes: nodeCount,
+        totalNodes: nodeCount2,
         currentBatch: chunkIdx + 1,
         totalBatches: numChunks,
       });
@@ -212,8 +226,8 @@ export const runEmbeddingPipeline = async (
     emitProgress(onProgress, {
       phase: 'indexing',
       percent: 90,
-      nodesProcessed: nodeCount,
-      totalNodes: nodeCount,
+      nodesProcessed: nodeCount2,
+      totalNodes: nodeCount2,
     });
 
     if (import.meta.env.DEV) {
@@ -225,8 +239,8 @@ export const runEmbeddingPipeline = async (
     emitProgress(onProgress, {
       phase: 'ready',
       percent: 100,
-      nodesProcessed: nodeCount,
-      totalNodes: nodeCount,
+      nodesProcessed: nodeCount2,
+      totalNodes: nodeCount2,
     });
 
     if (import.meta.env.DEV) {

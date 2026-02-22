@@ -569,28 +569,117 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => {
 
   // Snapshot methods
   const saveSnapshot = useCallback(async (path: string): Promise<{ success: boolean; size: number }> => {
+    const prowl = (window as any).prowl;
+    if (!prowl?.snapshot) {
+      return { success: false, size: 0 };
+    }
+
     const api = ensureWorker();
-    return api.saveSnapshot(path);
+    try {
+      const { data, meta, manifest } = await api.collectAndSerialize();
+
+      // Read git commit in renderer (has access to IPC)
+      let gitCommit: string | null = null;
+      try {
+        if (prowl.fs?.readFile) {
+          const head = await prowl.fs.readFile(`${path}/.git/HEAD`);
+          const match = head.trim().match(/^ref: (.+)$/);
+          if (match) {
+            const ref = match[1];
+            const commit = await prowl.fs.readFile(`${path}/.git/${ref}`);
+            gitCommit = commit.trim();
+          } else {
+            gitCommit = head.trim();
+          }
+        }
+      } catch { /* not a git repo */ }
+
+      // Patch gitCommit into meta
+      const patchedMeta = { ...meta, gitCommit };
+
+      // Generate HMAC
+      const hmac = await prowl.snapshot.generateHMAC(data);
+
+      // Write snapshot atomically
+      await prowl.snapshot.write(path, data);
+
+      // Write meta with HMAC
+      await prowl.snapshot.writeMeta(path, { ...patchedMeta, hmac });
+
+      // Write manifest
+      await prowl.snapshot.writeManifest(path, manifest);
+
+      // Ensure .gitignore has .prowl/
+      await prowl.snapshot.ensureGitignore(path);
+
+      if (import.meta.env.DEV) {
+        console.log(`[prowl:snapshot] Saved: ${(data.byteLength / 1024).toFixed(0)} KB`);
+      }
+
+      return { success: true, size: data.byteLength };
+    } catch (err) {
+      console.warn('[prowl:snapshot] Save failed:', err);
+      return { success: false, size: 0 };
+    }
   }, [ensureWorker]);
 
   const loadSnapshot = useCallback(async (
     path: string,
     onProgress: (p: IndexingProgress) => void,
   ): Promise<IndexingResult | null> => {
+    const prowl = (window as any).prowl;
+    if (!prowl?.snapshot) return null;
+
     const api = ensureWorker();
-    const proxiedOnProgress = Comlink.proxy(onProgress);
     try {
-      const rawResult = await api.loadSnapshot(path, proxiedOnProgress);
-      if (!rawResult) return null;
+      onProgress({ phase: 'extracting', percent: 5, message: 'Reading snapshot...' });
+
+      // Read snapshot data in renderer (IPC)
+      const data: Uint8Array | null = await prowl.snapshot.read(path);
+      if (!data) return null;
+
+      // Read meta and verify HMAC in renderer (IPC)
+      onProgress({ phase: 'extracting', percent: 10, message: 'Verifying integrity...' });
+      const meta = await prowl.snapshot.readMeta(path) as any;
+      if (!meta?.hmac) return null;
+
+      const valid = await prowl.snapshot.verify(data, meta.hmac);
+      if (!valid) {
+        console.warn('[prowl:snapshot] HMAC verification failed — full re-index needed');
+        return null;
+      }
+
+      // Check format version compatibility
+      const { SNAPSHOT_FORMAT_VERSION } = await import('../core/snapshot/types');
+      if (meta.formatVersion != null && meta.formatVersion !== SNAPSHOT_FORMAT_VERSION) {
+        console.warn(`[prowl:snapshot] Format version mismatch: ${meta.formatVersion} vs ${SNAPSHOT_FORMAT_VERSION} — full re-index`);
+        return null;
+      }
+
+      // Check app version compatibility
+      const prowlVersion = (import.meta.env.VITE_APP_VERSION as string) || 'unknown';
+      if (meta.prowlVersion && prowlVersion !== 'unknown' && meta.prowlVersion !== prowlVersion) {
+        console.warn(`[prowl:snapshot] Version mismatch: ${meta.prowlVersion} vs ${prowlVersion} — full re-index`);
+        return null;
+      }
+
+      // Send verified data to worker for CPU-heavy restore
+      const proxiedOnProgress = Comlink.proxy(onProgress);
+      const result = await api.restoreFromSnapshot(
+        Comlink.transfer(data, [data.buffer]),
+        meta,
+        proxiedOnProgress,
+      );
 
       // Set embedding status if snapshot had embeddings
-      const { hasEmbeddings, ...serializedResult } = rawResult;
-      if (hasEmbeddings) {
+      if (result.hasEmbeddings) {
         setEmbeddingStatus('ready');
       }
 
-      return deserializeIndexingResult(serializedResult, createCodeGraph);
-    } catch {
+      // Deserialize to IndexingResult
+      return deserializeIndexingResult(result, createCodeGraph);
+    } catch (err) {
+      console.warn('[prowl:snapshot] Load failed:', err);
       return null;
     }
   }, [ensureWorker]);
@@ -600,10 +689,26 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => {
     folderPath: string,
     onProgress: (p: IndexingProgress) => void,
   ): Promise<IndexingResult | null> => {
+    const prowl = (window as any).prowl;
     const api = ensureWorker();
-    const proxiedOnProgress = Comlink.proxy(onProgress);
+
     try {
-      const serializedResult = await api.incrementalUpdate(diff, folderPath, proxiedOnProgress);
+      // Read changed/added files from disk in renderer (IPC)
+      const newFileContents = new Map<string, string>();
+      const filesToRead = [...diff.added, ...diff.modified];
+      if (prowl?.fs?.readFile) {
+        for (const filePath of filesToRead) {
+          try {
+            const content = await prowl.fs.readFile(`${folderPath}/${filePath}`);
+            newFileContents.set(filePath, content);
+          } catch {
+            // File might be binary or unreadable — skip
+          }
+        }
+      }
+
+      const proxiedOnProgress = Comlink.proxy(onProgress);
+      const serializedResult = await api.incrementalUpdate(diff, newFileContents, proxiedOnProgress);
       if (!serializedResult) return null;
       return deserializeIndexingResult(serializedResult, createCodeGraph);
     } catch {

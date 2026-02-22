@@ -54,12 +54,19 @@ const AppContent = () => {
   // Track folder path for auto-watcher — stored in ref to avoid re-render deps
   const pendingFolderPathRef = useRef<string | null>(null);
 
-  // Keyboard shortcut: Ctrl+` to toggle terminal
+  // Keyboard shortcuts (openFolder ref filled after handleFolderLoad is defined)
+  const openFolderRef = useRef<() => void>(() => {});
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key === '`') {
         e.preventDefault();
         setIsTerminalOpen(prev => !prev);
+      }
+      // Cmd+O / Ctrl+O to open folder
+      if ((e.metaKey || e.ctrlKey) && e.key === 'o') {
+        e.preventDefault();
+        openFolderRef.current();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -288,6 +295,26 @@ const AppContent = () => {
     }
   }, [setViewMode, setGraph, setFileContents, setProgress, setProjectName, runPipelineFromFiles, startEmbeddings, initializeAgent, startAgentWatcher, setProjectPath, setLoadedFromSnapshot, loadSnapshot, saveSnapshot, incrementalUpdate]);
 
+  // Open a folder via native directory picker, then scan and load
+  const openFolder = useCallback(async () => {
+    const prowl = (window as any).prowl;
+    if (!prowl?.selectDirectory || !prowl?.scanFolder) return;
+    const dirPath = await prowl.selectDirectory();
+    if (!dirPath) return;
+    try {
+      const files = await prowl.scanFolder(dirPath);
+      if (files.length === 0) return;
+      handleFolderLoad(files, dirPath);
+    } catch (err) {
+      console.warn('[prowl] Folder scan failed:', err);
+    }
+  }, [handleFolderLoad]);
+
+  // Keep ref in sync for keyboard shortcut
+  useEffect(() => {
+    openFolderRef.current = openFolder;
+  }, [openFolder]);
+
   const handleFocusNode = useCallback((nodeId: string) => {
     graphCanvasRef.current?.focusNode(nodeId);
   }, []);
@@ -327,6 +354,7 @@ const AppContent = () => {
         onFocusNode={handleFocusNode}
         onRefreshGraph={handleRefreshGraph}
         onOpenRoadmap={() => setIsRoadmapOpen(true)}
+        onOpenFolder={openFolder}
       />
 
       <main className="flex-1 flex min-h-0 overflow-hidden">

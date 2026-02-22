@@ -87,9 +87,11 @@ export const initKuzu = async () => {
   try {
     if (import.meta.env.DEV) console.log('[prowl:kuzu] initializing...');
 
-    const imported = await import('kuzu-wasm');
-    wasmLib = imported.default || imported;
-    await wasmLib.init();
+    if (!wasmLib) {
+      const imported = await import('kuzu-wasm');
+      wasmLib = imported.default || imported;
+      await wasmLib.init();
+    }
 
     const POOL_BYTES = 512 * 1024 * 1024;
     database = new wasmLib.Database(':memory:', POOL_BYTES);
@@ -123,6 +125,8 @@ export const loadGraphToKuzu = async (
   graph: CodeGraph,
   fileContents: Map<string, string>,
 ) => {
+  // Reset the in-memory DB to get a clean slate (drops all data + indexes)
+  await closeKuzu();
   const { conn, kuzu } = await initKuzu();
 
   try {
@@ -313,7 +317,7 @@ export const isKuzuReady = (): boolean => {
   return connection !== null && database !== null;
 };
 
-/** Close the database connection. */
+/** Close the database and connection (preserves WASM module for fast re-init). */
 export const closeKuzu = async (): Promise<void> => {
   if (connection) {
     try { await connection.close(); } catch { /* noop */ }
@@ -323,7 +327,6 @@ export const closeKuzu = async (): Promise<void> => {
     try { await database.close(); } catch { /* noop */ }
     database = null;
   }
-  wasmLib = null;
 };
 
 /** Execute a prepared Cypher statement with parameters. */
