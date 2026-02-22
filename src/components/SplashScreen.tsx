@@ -5,7 +5,7 @@ export const SplashScreen = () => (
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-accent/[0.03] rounded-full blur-[140px]" />
     </div>
 
-    {/* Diamond + wordmark */}
+    {/* Logo + wordmark */}
     <div className="flex flex-col items-center gap-4 mb-10">
       <span className="text-[40px] leading-none text-accent/80 select-none" aria-hidden>
         ◇
