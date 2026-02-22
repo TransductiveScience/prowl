@@ -1,5 +1,5 @@
 // Wrapper for semver - provides both named and default exports
-import semverRaw from 'semver';
+import semverRaw from '../../node_modules/semver/semver.js';
 const semver = semverRaw.default || semverRaw;
 
 // Re-export as both default and named exports for compatibility

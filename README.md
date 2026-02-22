@@ -4,9 +4,9 @@
 
 **Your second monitor while AI writes the code.**
 
-[![Version](https://img.shields.io/badge/version-0.1.2-blue.svg)](https://github.com/neur0map/prowl/releases)
+[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](https://github.com/neur0map/prowl/releases)
 [![Beta](https://img.shields.io/badge/status-beta-orange.svg)](#)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-BSL--1.0-green.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-18%2B-brightgreen.svg)](https://nodejs.org)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/neur0map/prowl/pulls)
 
@@ -74,6 +74,7 @@ Prowl gives you the picture.
 | **Built-in Terminal** | Run your AI coder here. Multiple tabs. Watch the graph while it works. |
 | **Code Editor** | Click any node to view or edit. Monaco-powered. |
 | **Codebase Chat** | Ask questions about your code. Doesn't touch your main coder's context. |
+| **Semantic Embeddings** | On-device vector embeddings via Snowflake Arctic Embed XS. WebGPU accelerated with WASM fallback. |
 
 ### Detection
 
@@ -93,9 +94,10 @@ Four layers running in parallel:
 | Hybrid search | BM25 + semantic embeddings + rank fusion |
 | Cypher queries | Query the graph database directly |
 | Regex grep | Pattern search across files |
-| File reader | Read file contents |
-| Symbol explorer | Browse functions, classes, imports |
-| Impact analysis | Trace what depends on what |
+| File reader | Read file contents with fuzzy path matching |
+| Overview | High-level codebase map with clusters and dependencies |
+| Explore | Drill into symbols, clusters, or processes |
+| Impact analysis | Multi-depth upstream/downstream dependency tracing |
 
 ### Other
 
@@ -105,7 +107,7 @@ Four layers running in parallel:
 | **ZIP support** | Drag and drop archives |
 | **Community detection** | Leiden algorithm clusters related code |
 | **Process tracing** | Trace execution paths through call graphs |
-| **MCP server** | Query indexed DB from external tools |
+| **Snapshots** | Serialized with msgpackr, integrity verified via HMAC |
 
 ---
 
@@ -186,6 +188,7 @@ Prowl uses tree-sitter to extract symbols and builds a graph database (KuzuDB) y
 | Azure OpenAI | Supported |
 | Ollama | Supported |
 | OpenRouter | Supported |
+| Groq | Supported |
 
 API keys stored securely via OS keychain (Electron safeStorage).
 
@@ -243,10 +246,11 @@ On first launch, macOS will ask to access **"prowl Safe Storage"** in your keych
 | Graph | Sigma.js, graphology |
 | Parsing | tree-sitter WASM |
 | Database | KuzuDB WASM |
-| AI | LangChain, Transformers.js |
+| Embeddings | Snowflake Arctic Embed XS (Transformers.js, WebGPU/WASM) |
+| AI | LangChain |
 | Terminal | xterm.js, node-pty |
 | Editor | Monaco |
-| Build | Vite |
+| Build | electron-vite |
 
 ---
 
@@ -264,5 +268,4 @@ PRs welcome. Open an issue first for major changes.
 
 ## License
 
-MIT
-
+[Boost Software License 1.0](LICENSE)
