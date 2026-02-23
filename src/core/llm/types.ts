@@ -1,8 +1,8 @@
-// ── Provider Identification ──
+/* ── Provider identifiers ────────────────────────────── */
 
 export type LLMProvider = 'openai' | 'azure-openai' | 'gemini' | 'anthropic' | 'ollama' | 'openrouter' | 'groq';
 
-// ── Provider Config Types ──
+/* ── Per-provider configuration shapes ───────────────── */
 
 export interface BaseProviderConfig {
   provider: LLMProvider;
@@ -69,7 +69,7 @@ export type ProviderConfig =
   | OpenRouterConfig
   | GroqConfig;
 
-// ── Persisted Settings ──
+/* ── Persisted user preferences ──────────────────────── */
 
 export interface LLMSettings {
   activeProvider: LLMProvider;
@@ -88,9 +88,9 @@ export interface LLMSettings {
   clusteringProvider?: Partial<ProviderConfig>;
 }
 
-// ── Settings Defaults ──
+/* ── Initial values per provider ─────────────────────── */
 
-const PROVIDER_DEFAULTS = {
+const INITIAL_PROVIDER_VALUES = {
   openai: {
     apiKey: '',
     model: 'gpt-4o',
@@ -138,16 +138,16 @@ export const DEFAULT_LLM_SETTINGS: LLMSettings = {
   intelligentClustering: false,
   hasSeenClusteringPrompt: false,
   useSameModelForClustering: true,
-  openai: PROVIDER_DEFAULTS.openai,
-  gemini: PROVIDER_DEFAULTS.gemini,
-  azureOpenAI: PROVIDER_DEFAULTS.azureOpenAI,
-  anthropic: PROVIDER_DEFAULTS.anthropic,
-  ollama: PROVIDER_DEFAULTS.ollama,
-  openrouter: PROVIDER_DEFAULTS.openrouter,
-  groq: PROVIDER_DEFAULTS.groq,
+  openai: INITIAL_PROVIDER_VALUES.openai,
+  gemini: INITIAL_PROVIDER_VALUES.gemini,
+  azureOpenAI: INITIAL_PROVIDER_VALUES.azureOpenAI,
+  anthropic: INITIAL_PROVIDER_VALUES.anthropic,
+  ollama: INITIAL_PROVIDER_VALUES.ollama,
+  openrouter: INITIAL_PROVIDER_VALUES.openrouter,
+  groq: INITIAL_PROVIDER_VALUES.groq,
 };
 
-// ── Agent Execution Types ──
+/* ── Agent execution types ───────────────────────────── */
 
 export interface ToolCallInfo {
   id: string;
@@ -172,7 +172,7 @@ export interface AgentStep {
   timestamp: number;
 }
 
-// ── Chat & Streaming Types ──
+/* ── Chat and streaming types ────────────────────────── */
 
 export interface ChatMessage {
   id: string;
@@ -193,7 +193,7 @@ export interface AgentStreamChunk {
   error?: string;
 }
 
-// ── KuzuDB Graph Schema Reference ──
+/* ── KuzuDB graph schema reference (injected into LLM prompts) ── */
 
 export const KUZU_SCHEMA_REF = `
 Kuzu Graph Schema (multi-table layout):
@@ -220,14 +220,14 @@ Nodes:
 7. CodeElement — catch-all for other code entities
    - id: STRING (pk), name: STRING, filePath: STRING, startLine: INT64, endLine: INT64, content: STRING
 
-8. CodeEmbedding — vector store (kept separate for performance)
+8. CodeEmbedding — vector store (separate table for performance)
    - nodeId: STRING (pk), embedding: FLOAT[384]
 
 Edges:
-CodeEdge — single edge table connecting all node types via a 'type' property
+CodeEdge — unified edge table linking all node types via a 'type' property
   type values: CONTAINS, DEFINES, IMPORTS, CALLS
 
-Edge patterns:
+Edge semantics:
 - CONTAINS: Folder->Folder, Folder->File
 - DEFINES: File->Function, File->Class, File->Interface, File->Method, File->CodeElement
 - IMPORTS: File->File
@@ -255,8 +255,8 @@ Example Queries:
    MATCH (f:File)-[:CodeEdge {type: 'IMPORTS'}]->(target:File {name: 'utils.ts'})
    RETURN f.name, f.filePath
 
-6. Vector / semantic search (embeddings live in a separate table — join required):
-   CALL QUERY_VECTOR_INDEX('CodeEmbedding', 'code_embedding_idx', $queryVector, 10)
+6. Vector / semantic search (embeddings in a separate table — requires join):
+   CALL QUERY_VECTOR_INDEX('CodeEmbedding', 'code_embedding_idx', \$queryVector, 10)
    YIELD node AS emb, distance
    WITH emb, distance
    WHERE distance < 0.4
@@ -280,9 +280,9 @@ Example Queries:
 
 Vector search note (for execute_vector_cypher):
 - Place {{QUERY_VECTOR}} in the Cypher where the vector literal should go.
-- The runtime replaces it with CAST([..] AS FLOAT[384]).
+- The runtime substitutes it with CAST([..] AS FLOAT[384]).
 
-KuzuDB constraints (violating these will error):
+KuzuDB constraints (violating these will produce errors):
 1. Never return raw nodes (RETURN f) — always project properties: RETURN f.name, f.filePath
 2. WITH + ORDER BY requires LIMIT or SKIP: WITH n, cnt ORDER BY cnt DESC LIMIT 20 RETURN n, cnt
    Omitting LIMIT after ORDER BY in a WITH clause triggers "ORDER BY must be followed by SKIP or LIMIT"

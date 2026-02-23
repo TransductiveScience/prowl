@@ -1,7 +1,7 @@
 /**
- * End-to-end vector embedding workflow: fetch eligible nodes from KuzuDB,
- * generate text representations, embed in batches, persist vectors,
- * and create the HNSW index for semantic search.
+ * Full vector-embedding workflow: pull eligible nodes from KuzuDB,
+ * convert to text, embed in batches, store vectors, and build
+ * the HNSW index used by semantic search.
  */
 
 import { initEmbedder, embedBatch, embedText, embeddingToArray, isEmbedderReady } from './embedder';
@@ -16,11 +16,14 @@ import {
   VECTORIZABLE_TYPES,
 } from './types';
 
-/** Progress callback. */
+/* ── Types ───────────────────────────────────────────── */
+
 export type EmbeddingProgressCallback = (progress: EmbeddingProgress) => void;
 
-/** Build a Cypher query for a node label; File nodes omit line-range columns. */
-const buildNodeQuery = (nodeLabel: string): string => {
+/* ── Query generation ────────────────────────────────── */
+
+/* Cypher statement that fetches all nodes of a given label */
+function cypherForLabel(nodeLabel: string): string {
   if (nodeLabel === 'File') {
     return `
       MATCH (n:File)
@@ -34,94 +37,97 @@ const buildNodeQuery = (nodeLabel: string): string => {
            n.filePath AS filePath, n.content AS content,
            n.startLine AS startLine, n.endLine AS endLine
   `;
-};
+}
 
-/** Normalise a result row into an EmbeddableNode (supports named and positional formats). */
-const rowToNode = (row: any): EmbeddableNode => ({
-  id: row.id ?? row[0],
-  name: row.name ?? row[1],
-  label: row.label ?? row[2],
-  filePath: row.filePath ?? row[3],
-  content: row.content ?? row[4] ?? '',
-  startLine: row.startLine ?? row[5],
-  endLine: row.endLine ?? row[6],
-});
+/* Convert a row (named or positional) into a typed node */
+function parseRow(row: any): EmbeddableNode {
+  return {
+    id: row.id ?? row[0],
+    name: row.name ?? row[1],
+    label: row.label ?? row[2],
+    filePath: row.filePath ?? row[3],
+    content: row.content ?? row[4] ?? '',
+    startLine: row.startLine ?? row[5],
+    endLine: row.endLine ?? row[6],
+  };
+}
 
-/** Fetch all vectorisable nodes from KuzuDB. */
-const fetchAllEmbeddableNodes = async (
-  executeQuery: (cypher: string) => Promise<any[]>
-): Promise<EmbeddableNode[]> => {
+/* Gather every node that qualifies for vector embedding */
+async function gatherEmbeddableNodes(
+  executeQuery: (cypher: string) => Promise<any[]>,
+): Promise<EmbeddableNode[]> {
   const collected: EmbeddableNode[] = [];
 
   await Promise.all(
     VECTORIZABLE_TYPES.map(async (label) => {
       try {
-        const cypher = buildNodeQuery(label);
-        const rows = await executeQuery(cypher);
-        rows.forEach((row) => collected.push(rowToNode(row)));
+        const rows = await executeQuery(cypherForLabel(label));
+        for (const row of rows) collected.push(parseRow(row));
       } catch (err) {
         if (import.meta.env.DEV) {
-          console.warn(`Query for ${label} nodes failed:`, err);
+          console.warn(`Fetch for ${label} nodes failed:`, err);
         }
       }
-    })
+    }),
   );
 
   return collected;
-};
+}
 
-/** Store embedding vectors in the CodeEmbedding table (avoids COW on heavy node tables). */
-const persistEmbeddings = async (
+/* ── Persistence helpers ─────────────────────────────── */
+
+/* Write embedding vectors into the CodeEmbedding table */
+async function storeVectors(
   executeWithReusedStatement: (
     cypher: string,
-    paramsList: Array<Record<string, any>>
+    paramsList: Array<Record<string, any>>,
   ) => Promise<void>,
-  entries: Array<{ id: string; embedding: number[] }>
-): Promise<void> => {
-  const statement = `CREATE (e:CodeEmbedding {nodeId: $nodeId, embedding: $embedding})`;
+  entries: Array<{ id: string; embedding: number[] }>,
+): Promise<void> {
+  const stmt = `CREATE (e:CodeEmbedding {nodeId: $nodeId, embedding: $embedding})`;
   const params = entries.map((entry) => ({
     nodeId: entry.id,
     embedding: entry.embedding,
   }));
-  await executeWithReusedStatement(statement, params);
-};
+  await executeWithReusedStatement(stmt, params);
+}
 
-/** Create the cosine vector index if it does not already exist. */
-const ensureVectorIndex = async (
-  executeQuery: (cypher: string) => Promise<any[]>
-): Promise<void> => {
+/* Build the cosine HNSW index if it does not yet exist */
+async function guaranteeHNSWIndex(
+  executeQuery: (cypher: string) => Promise<any[]>,
+): Promise<void> {
   try {
     await executeQuery(
-      `CALL CREATE_VECTOR_INDEX('CodeEmbedding', 'code_embedding_idx', 'embedding', metric := 'cosine')`
+      `CALL CREATE_VECTOR_INDEX('CodeEmbedding', 'code_embedding_idx', 'embedding', metric := 'cosine')`,
     );
   } catch (err) {
-    // Index may already exist (e.g. restored from snapshot) — non-fatal
     if (import.meta.env.DEV) {
-      console.warn('Could not create vector index (may already exist):', err);
+      console.warn('Vector index creation skipped (may already exist):', err);
     }
   }
-};
+}
 
-/** Emit a progress update. */
-const emitProgress = (
+/* Forward a progress event to the caller */
+function notify(
   cb: EmbeddingProgressCallback,
-  payload: EmbeddingProgress
-): void => {
+  payload: EmbeddingProgress,
+): void {
   cb(payload);
-};
+}
 
-/** Run the full embedding pipeline against KuzuDB. */
-export const runEmbeddingPipeline = async (
+/* ── Main pipeline ───────────────────────────────────── */
+
+export async function runEmbeddingPipeline(
   executeQuery: (cypher: string) => Promise<any[]>,
   executeWithReusedStatement: (cypher: string, paramsList: Array<Record<string, any>>) => Promise<void>,
   onProgress: EmbeddingProgressCallback,
-  config: Partial<EmbeddingConfig> = {}
-): Promise<void> => {
+  config: Partial<EmbeddingConfig> = {},
+): Promise<void> {
   const cfg = { ...DEFAULT_EMBEDDING_CONFIG, ...config };
 
   try {
-    // Phase 1 -- load model
-    emitProgress(onProgress, {
+    /* Step 1 — load the transformer model */
+    notify(onProgress, {
       phase: 'loading-model',
       percent: 0,
       modelDownloadPercent: 0,
@@ -129,33 +135,33 @@ export const runEmbeddingPipeline = async (
 
     await initEmbedder((mp: ModelProgress) => {
       const pct = mp.progress ?? 0;
-      emitProgress(onProgress, {
+      notify(onProgress, {
         phase: 'loading-model',
         percent: Math.round(pct * 0.2),
         modelDownloadPercent: pct,
       });
     }, cfg);
 
-    emitProgress(onProgress, {
+    notify(onProgress, {
       phase: 'loading-model',
       percent: 20,
       modelDownloadPercent: 100,
     });
 
     if (import.meta.env.DEV) {
-      console.log('Querying embeddable nodes...');
+      console.log('Fetching embeddable nodes...');
     }
 
-    // Phase 2 -- fetch nodes
-    const nodes = await fetchAllEmbeddableNodes(executeQuery);
-    const nodeCount = nodes.length;
+    /* Step 2 — pull nodes from graph DB */
+    const nodes = await gatherEmbeddableNodes(executeQuery);
+    const totalCount = nodes.length;
 
     if (import.meta.env.DEV) {
-      console.log(`Found ${nodeCount} embeddable nodes`);
+      console.log(`Collected ${totalCount} nodes for embedding`);
     }
 
-    if (nodeCount === 0) {
-      emitProgress(onProgress, {
+    if (totalCount === 0) {
+      notify(onProgress, {
         phase: 'ready',
         percent: 100,
         nodesProcessed: 0,
@@ -164,38 +170,37 @@ export const runEmbeddingPipeline = async (
       return;
     }
 
-    // Clear existing embeddings before re-persisting
+    /* Wipe stale vectors before re-persisting */
     try {
       await executeQuery('MATCH (e:CodeEmbedding) DELETE e');
-    } catch { /* table may be empty or missing */ }
+    } catch { /* table may not exist yet */ }
 
-    // Deduplicate nodes by ID (upstream graph may contain duplicates)
-    const deduped = new Map<string, typeof nodes[0]>();
+    /* Remove duplicate node IDs (upstream graph can contain repeats) */
+    const seen = new Map<string, typeof nodes[0]>();
     for (const nd of nodes) {
-      if (!deduped.has(nd.id)) deduped.set(nd.id, nd);
+      if (!seen.has(nd.id)) seen.set(nd.id, nd);
     }
-    const uniqueNodes = Array.from(deduped.values());
-    const nodeCount2 = uniqueNodes.length;
+    const unique = Array.from(seen.values());
+    const uniqueCount = unique.length;
 
-    // Phase 3 -- batch embed
-    const chunkSize = cfg.batchSize;
-    const numChunks = Math.ceil(nodeCount2 / chunkSize);
-    let completed = 0;
+    /* Step 3 — batch vectorisation */
+    const batchSz = cfg.batchSize;
+    const batchCount = Math.ceil(uniqueCount / batchSz);
+    let done = 0;
 
-    emitProgress(onProgress, {
+    notify(onProgress, {
       phase: 'embedding',
       percent: 20,
       nodesProcessed: 0,
-      totalNodes: nodeCount2,
+      totalNodes: uniqueCount,
       currentBatch: 0,
-      totalBatches: numChunks,
+      totalBatches: batchCount,
     });
 
-    let chunkIdx = 0;
-    while (chunkIdx < numChunks) {
-      const lo = chunkIdx * chunkSize;
-      const hi = Math.min(lo + chunkSize, nodeCount2);
-      const chunk = uniqueNodes.slice(lo, hi);
+    for (let b = 0; b < batchCount; b++) {
+      const lo = b * batchSz;
+      const hi = Math.min(lo + batchSz, uniqueCount);
+      const chunk = unique.slice(lo, hi);
 
       const texts = prepareBatchTexts(chunk, cfg);
       const vectors = await embedBatch(texts);
@@ -205,55 +210,53 @@ export const runEmbeddingPipeline = async (
         embedding: embeddingToArray(vectors[idx]),
       }));
 
-      await persistEmbeddings(executeWithReusedStatement, entries);
+      await storeVectors(executeWithReusedStatement, entries);
 
-      completed += chunk.length;
-      const phasePct = 20 + (completed / nodeCount2) * 70;
+      done += chunk.length;
+      const phasePct = 20 + (done / uniqueCount) * 70;
 
-      emitProgress(onProgress, {
+      notify(onProgress, {
         phase: 'embedding',
         percent: Math.round(phasePct),
-        nodesProcessed: completed,
-        totalNodes: nodeCount2,
-        currentBatch: chunkIdx + 1,
-        totalBatches: numChunks,
+        nodesProcessed: done,
+        totalNodes: uniqueCount,
+        currentBatch: b + 1,
+        totalBatches: batchCount,
       });
-
-      chunkIdx++;
     }
 
-    // Phase 4 -- index vectors
-    emitProgress(onProgress, {
+    /* Step 4 — create HNSW vector index */
+    notify(onProgress, {
       phase: 'indexing',
       percent: 90,
-      nodesProcessed: nodeCount2,
-      totalNodes: nodeCount2,
+      nodesProcessed: uniqueCount,
+      totalNodes: uniqueCount,
     });
 
     if (import.meta.env.DEV) {
-      console.log('Creating vector index...');
+      console.log('Building vector index...');
     }
 
-    await ensureVectorIndex(executeQuery);
+    await guaranteeHNSWIndex(executeQuery);
 
-    emitProgress(onProgress, {
+    notify(onProgress, {
       phase: 'ready',
       percent: 100,
-      nodesProcessed: nodeCount2,
-      totalNodes: nodeCount2,
+      nodesProcessed: uniqueCount,
+      totalNodes: uniqueCount,
     });
 
     if (import.meta.env.DEV) {
-      console.log('Embedding pipeline complete');
+      console.log('Vector pipeline finished');
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
 
     if (import.meta.env.DEV) {
-      console.error('Embedding pipeline error:', err);
+      console.error('Vector pipeline failed:', err);
     }
 
-    emitProgress(onProgress, {
+    notify(onProgress, {
       phase: 'error',
       percent: 0,
       error: msg,
@@ -261,15 +264,17 @@ export const runEmbeddingPipeline = async (
 
     throw err;
   }
-};
+}
 
-/** Semantic search via the CodeEmbedding vector index. */
-export const semanticSearch = async (
+/* ── Semantic search ─────────────────────────────────── */
+
+/* Query the HNSW index for nearest-neighbour matches */
+export async function semanticSearch(
   executeQuery: (cypher: string) => Promise<any[]>,
   query: string,
   k: number = 10,
-  maxDistance: number = 0.5
-): Promise<SemanticSearchResult[]> => {
+  maxDistance: number = 0.5,
+): Promise<SemanticSearchResult[]> {
   if (!isEmbedderReady()) {
     throw new Error('Vector model unavailable. Execute the embedding pipeline before searching.');
   }
@@ -293,7 +298,7 @@ export const semanticSearch = async (
     return [];
   }
 
-  // Fetch metadata for each hit
+  /* Resolve metadata for each matched node */
   const output: SemanticSearchResult[] = [];
 
   await Promise.all(
@@ -325,24 +330,24 @@ export const semanticSearch = async (
           });
         }
       } catch {
-        // missing table -- skip
+        /* node table may not exist — skip */
       }
-    })
+    }),
   );
 
-  // Re-sort by distance after parallel metadata resolution
+  /* Re-sort after parallel metadata resolution */
   output.sort((a, b) => a.distance - b.distance);
 
   return output;
-};
+}
 
-/** Semantic search returning flattened results with metadata. */
-export const semanticSearchWithContext = async (
+/* Flat-format semantic search returning metadata alongside each hit */
+export async function semanticSearchWithContext(
   executeQuery: (cypher: string) => Promise<any[]>,
   query: string,
   k: number = 5,
-  _hops: number = 1
-): Promise<any[]> => {
+  _hops: number = 1,
+): Promise<any[]> {
   const hits = await semanticSearch(executeQuery, query, k, 0.5);
 
   return hits.map((h) => ({
@@ -356,4 +361,4 @@ export const semanticSearchWithContext = async (
     connectedLabel: null,
     relationType: null,
   }));
-};
+}

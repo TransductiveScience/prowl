@@ -1,16 +1,16 @@
 import { pipeline, env, type FeatureExtractionPipeline } from '@huggingface/transformers';
 import { DEFAULT_EMBEDDING_CONFIG, type EmbeddingConfig, type ModelProgress } from './types';
 
-// ---- State ----
+/* ── Runtime singleton ───────────────────────────────── */
 
-const state = {
+const runtime = {
   instance: null as FeatureExtractionPipeline | null,
   loading: false,
   pending: null as Promise<FeatureExtractionPipeline> | null,
   activeDevice: null as 'webgpu' | 'wasm' | null,
 };
 
-// ---- Types ----
+/* ── Types ───────────────────────────────────────────── */
 
 export type ModelProgressCallback = (progress: ModelProgress) => void;
 
@@ -22,9 +22,9 @@ export class WebGPUNotAvailableError extends Error {
   }
 }
 
-// ---- WebGPU Probe ----
+/* ── GPU capability test ─────────────────────────────── */
 
-async function probeWebGPU(): Promise<boolean> {
+async function testGPUCapability(): Promise<boolean> {
   try {
     const nav = navigator as any;
     if (!nav.gpu) return false;
@@ -38,22 +38,24 @@ async function probeWebGPU(): Promise<boolean> {
   }
 }
 
-export const checkWebGPUAvailability = probeWebGPU;
+export const checkWebGPUAvailability = testGPUCapability;
 
-// ---- Active Device ----
+/* ── Device accessor ─────────────────────────────────── */
 
-export const getCurrentDevice = (): 'webgpu' | 'wasm' | null => state.activeDevice;
+export function getCurrentDevice(): 'webgpu' | 'wasm' | null {
+  return runtime.activeDevice;
+}
 
-// ---- Initialisation ----
+/* ── Environment setup ───────────────────────────────── */
 
-function configureEnvironment(): void {
+function setupEnv(): void {
   env.allowLocalModels = false;
   env.logLevel = 'error';
   env.useBrowserCache = true;
 }
 
-function wrapProgressCallback(
-  onProgress?: ModelProgressCallback
+function bridgeProgressCb(
+  onProgress?: ModelProgressCallback,
 ): ((data: any) => void) | undefined {
   if (!onProgress) return undefined;
   return (data: any) => {
@@ -67,10 +69,10 @@ function wrapProgressCallback(
   };
 }
 
-async function createPipeline(
+async function instantiatePipeline(
   modelId: string,
   device: 'webgpu' | 'wasm',
-  progressCb?: (data: any) => void
+  progressCb?: (data: any) => void,
 ): Promise<FeatureExtractionPipeline> {
   return await (pipeline as any)(
     'feature-extraction',
@@ -79,138 +81,142 @@ async function createPipeline(
       device,
       dtype: 'fp32',
       progress_callback: progressCb,
-    }
+    },
   );
 }
 
-async function initWithWebGPU(
+/* ── Backend boot helpers ────────────────────────────── */
+
+async function bootWithGPU(
   modelId: string,
-  progressCb?: (data: any) => void
+  progressCb?: (data: any) => void,
 ): Promise<FeatureExtractionPipeline> {
   if (import.meta.env.DEV) {
-    console.log('[prowl:embedder] checking WebGPU availability');
+    console.log('[prowl:embedder] probing WebGPU support');
   }
 
-  const gpuOk = await probeWebGPU();
+  const gpuOk = await testGPUCapability();
 
   if (!gpuOk) {
     if (import.meta.env.DEV) {
-      console.warn('[prowl:embedder] WebGPU not available');
+      console.warn('[prowl:embedder] WebGPU unavailable on this device');
     }
-    state.loading = false;
-    state.pending = null;
+    runtime.loading = false;
+    runtime.pending = null;
     throw new WebGPUNotAvailableError();
   }
 
   try {
     if (import.meta.env.DEV) {
-      console.log('[prowl:embedder] initializing WebGPU backend');
+      console.log('[prowl:embedder] starting WebGPU backend');
     }
-    const inst = await createPipeline(modelId, 'webgpu', progressCb);
-    state.activeDevice = 'webgpu';
+    const inst = await instantiatePipeline(modelId, 'webgpu', progressCb);
+    runtime.activeDevice = 'webgpu';
     if (import.meta.env.DEV) {
-      console.log('[prowl:embedder] using WebGPU backend');
+      console.log('[prowl:embedder] WebGPU backend active');
     }
     return inst;
   } catch (gpuErr) {
     if (import.meta.env.DEV) {
-      console.warn('[prowl:embedder] WebGPU initialization failed:', gpuErr);
+      console.warn('[prowl:embedder] WebGPU boot failed:', gpuErr);
     }
-    state.loading = false;
-    state.pending = null;
-    state.instance = null;
+    runtime.loading = false;
+    runtime.pending = null;
+    runtime.instance = null;
     throw new WebGPUNotAvailableError(gpuErr as Error);
   }
 }
 
-async function initWithWasm(
+async function bootWithWasm(
   modelId: string,
-  progressCb?: (data: any) => void
+  progressCb?: (data: any) => void,
 ): Promise<FeatureExtractionPipeline> {
   if (import.meta.env.DEV) {
-    console.log('[prowl:embedder] initializing WASM backend');
+    console.log('[prowl:embedder] starting WASM backend');
   }
-  const inst = await createPipeline(modelId, 'wasm', progressCb);
-  state.activeDevice = 'wasm';
+  const inst = await instantiatePipeline(modelId, 'wasm', progressCb);
+  runtime.activeDevice = 'wasm';
   if (import.meta.env.DEV) {
-    console.log('[prowl:embedder] using WASM backend');
+    console.log('[prowl:embedder] WASM backend active');
   }
   return inst;
 }
 
-export const initEmbedder = async (
+/* ── Model initialisation ────────────────────────────── */
+
+export async function initEmbedder(
   onProgress?: ModelProgressCallback,
   config: Partial<EmbeddingConfig> = {},
-  forceDevice?: 'webgpu' | 'wasm'
-): Promise<FeatureExtractionPipeline> => {
-  if (state.instance) return state.instance;
+  forceDevice?: 'webgpu' | 'wasm',
+): Promise<FeatureExtractionPipeline> {
+  if (runtime.instance) return runtime.instance;
 
-  if (state.loading && state.pending) return state.pending;
+  if (runtime.loading && runtime.pending) return runtime.pending;
 
-  state.loading = true;
+  runtime.loading = true;
 
-  const mergedConfig = { ...DEFAULT_EMBEDDING_CONFIG, ...config };
-  const targetDevice = forceDevice || mergedConfig.device;
+  const merged = { ...DEFAULT_EMBEDDING_CONFIG, ...config };
+  const targetDevice = forceDevice || merged.device;
 
-  state.pending = (async () => {
+  runtime.pending = (async () => {
     try {
-      configureEnvironment();
+      setupEnv();
 
       if (import.meta.env.DEV) {
-        console.log(`[prowl:embedder] loading model: ${mergedConfig.modelId}`);
+        console.log(`[prowl:embedder] fetching model: ${merged.modelId}`);
       }
 
-      const wrappedCb = wrapProgressCallback(onProgress);
+      const wrappedCb = bridgeProgressCb(onProgress);
 
       if (targetDevice === 'webgpu') {
-        state.instance = await initWithWebGPU(mergedConfig.modelId, wrappedCb);
+        runtime.instance = await bootWithGPU(merged.modelId, wrappedCb);
       } else {
-        state.instance = await initWithWasm(mergedConfig.modelId, wrappedCb);
+        runtime.instance = await bootWithWasm(merged.modelId, wrappedCb);
       }
 
       if (import.meta.env.DEV) {
-        console.log('[prowl:embedder] model loaded');
+        console.log('[prowl:embedder] model ready');
       }
 
-      return state.instance!;
+      return runtime.instance!;
     } catch (err) {
       if (err instanceof WebGPUNotAvailableError) throw err;
-      state.loading = false;
-      state.pending = null;
-      state.instance = null;
+      runtime.loading = false;
+      runtime.pending = null;
+      runtime.instance = null;
       throw err;
     } finally {
-      state.loading = false;
+      runtime.loading = false;
     }
   })();
 
-  return state.pending;
-};
+  return runtime.pending;
+}
 
-// ---- Readiness ----
+/* ── Status checks ───────────────────────────────────── */
 
-export const isEmbedderReady = (): boolean => state.instance !== null;
+export function isEmbedderReady(): boolean {
+  return runtime.instance !== null;
+}
 
-// ---- Accessor ----
-
-export const getEmbedder = (): FeatureExtractionPipeline => {
-  if (!state.instance) {
+export function getEmbedder(): FeatureExtractionPipeline {
+  if (!runtime.instance) {
     throw new Error('Embedding pipeline not ready. Initialize with initEmbedder() before use.');
   }
-  return state.instance;
-};
+  return runtime.instance;
+}
 
-// ---- Embed One ----
+/* ── Single-text embedding ───────────────────────────── */
 
-export const embedText = async (text: string): Promise<Float32Array> => {
+export async function embedText(text: string): Promise<Float32Array> {
   const emb = getEmbedder();
   const tensor = await emb(text, { pooling: 'mean', normalize: true });
   return new Float32Array(tensor.data as ArrayLike<number>);
-};
+}
 
-// ---- Embed Batch ----
+/* ── Batch embedding ─────────────────────────────────── */
 
-export const embedBatch = async (texts: string[]): Promise<Float32Array[]> => {
+export async function embedBatch(texts: string[]): Promise<Float32Array[]> {
   if (texts.length === 0) return [];
 
   const emb = getEmbedder();
@@ -226,24 +232,26 @@ export const embedBatch = async (texts: string[]): Promise<Float32Array[]> => {
   }
 
   return vectors;
-};
+}
 
-// ---- Conversion Util ----
+/* ── Conversion helper ───────────────────────────────── */
 
-export const embeddingToArray = (embedding: Float32Array): number[] => Array.from(embedding);
+export function embeddingToArray(embedding: Float32Array): number[] {
+  return Array.from(embedding);
+}
 
-// ---- Cleanup ----
+/* ── Teardown ────────────────────────────────────────── */
 
-export const disposeEmbedder = async (): Promise<void> => {
-  if (state.instance) {
+export async function disposeEmbedder(): Promise<void> {
+  if (runtime.instance) {
     try {
-      if ('dispose' in state.instance && typeof state.instance.dispose === 'function') {
-        await state.instance.dispose();
+      if ('dispose' in runtime.instance && typeof runtime.instance.dispose === 'function') {
+        await runtime.instance.dispose();
       }
     } catch {
-      // non-fatal disposal error
+      /* non-fatal disposal failure */
     }
-    state.instance = null;
-    state.pending = null;
+    runtime.instance = null;
+    runtime.pending = null;
   }
-};
+}

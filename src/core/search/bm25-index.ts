@@ -1,14 +1,16 @@
 /**
- * MiniSearch-backed BM25 keyword index.
- * Provides exact-term matching alongside the semantic (embedding) search path.
+ * Term-frequency keyword index backed by MiniSearch.
+ * Complements the vector search path with exact-term lookups.
  */
 
 import MiniSearch from 'minisearch';
 
+/* ── Shapes ──────────────────────────────────────────── */
+
 export interface BM25Document {
-  id: string;       // File path
-  content: string;  // File content
-  name: string;     // File name (boosted in search)
+  id: string;
+  content: string;
+  name: string;
 }
 
 export interface BM25SearchResult {
@@ -17,108 +19,101 @@ export interface BM25SearchResult {
   rank: number;
 }
 
-/** Stop words and language keywords that carry no retrieval signal */
-const NOISE_TERMS: ReadonlySet<string> = new Set([
-  // JS / TS language tokens
+/* ── Tokenisation ────────────────────────────────────── */
+
+/* Language keywords and filler words that add no retrieval value */
+const STOP_WORDS: ReadonlySet<string> = new Set([
   'const', 'let', 'var', 'function', 'return', 'if', 'else', 'for', 'while',
   'class', 'new', 'this', 'import', 'export', 'from', 'default', 'async', 'await',
   'try', 'catch', 'throw', 'typeof', 'instanceof', 'true', 'false', 'null', 'undefined',
-  // English stop words
   'the', 'is', 'at', 'which', 'on', 'a', 'an', 'and', 'or', 'but', 'in', 'with',
   'to', 'of', 'it', 'be', 'as', 'by', 'that', 'for', 'are', 'was', 'were',
 ]);
 
-/** Tokenise text: split on punctuation, expand camelCase, filter noise. */
-const tokenise = (text: string): string[] => {
+/* Split on punctuation, break camelCase, drop noise tokens */
+function splitTokens(text: string): string[] {
   const raw = text.toLowerCase().split(/[\s\-_./\\(){}[\]<>:;,!?'"]+/);
-  const result: string[] = [];
+  const tokens: string[] = [];
 
-  let idx = 0;
-  while (idx < raw.length) {
-    const tok = raw[idx];
-    idx++;
+  for (let i = 0; i < raw.length; i++) {
+    const tok = raw[i];
     if (tok.length === 0) continue;
 
-    // Split camelCase
-    const subParts = tok
+    const parts = tok
       .replace(/([a-z])([A-Z])/g, '$1 $2')
       .toLowerCase()
       .split(' ');
 
-    subParts.forEach((sp) => result.push(sp));
+    for (const p of parts) tokens.push(p);
 
-    // Keep compound token for exact match
-    if (subParts.length > 1) {
-      result.push(tok);
-    }
+    if (parts.length > 1) tokens.push(tok);
   }
 
-  return result.filter((t) => t.length > 1 && !NOISE_TERMS.has(t));
-};
+  return tokens.filter((t) => t.length > 1 && !STOP_WORDS.has(t));
+}
 
-/* Singleton index state */
-let activeIndex: MiniSearch<BM25Document> | null = null;
-let docTotal = 0;
+/* ── Index state ─────────────────────────────────────── */
 
-/** Build the BM25 index from file contents (call after ingestion). */
-export const buildBM25Index = (fileContents: Map<string, string>): number => {
-  activeIndex = new MiniSearch<BM25Document>({
+let index: MiniSearch<BM25Document> | null = null;
+let indexedCount = 0;
+
+/* Populate the keyword index from file contents (invoke after ingestion) */
+export function buildBM25Index(fileContents: Map<string, string>): number {
+  index = new MiniSearch<BM25Document>({
     fields: ['content', 'name'],
     storeFields: ['id'],
-    tokenize: tokenise,
+    tokenize: splitTokens,
   });
 
   const docs: BM25Document[] = [];
 
   fileContents.forEach((content, filePath) => {
-    const slash = filePath.lastIndexOf('/');
-    const fileName = slash >= 0 ? filePath.substring(slash + 1) : filePath;
+    const sep = filePath.lastIndexOf('/');
+    const fileName = sep >= 0 ? filePath.substring(sep + 1) : filePath;
     docs.push({ id: filePath, content, name: fileName });
   });
 
-  activeIndex.addAll(docs);
-  docTotal = docs.length;
+  index.addAll(docs);
+  indexedCount = docs.length;
 
-  return docTotal;
-};
+  return indexedCount;
+}
 
-/** Query the BM25 index for keyword matches. */
-export const searchBM25 = (query: string, limit: number = 20): BM25SearchResult[] => {
-  if (activeIndex === null) return [];
+/* Run a keyword query against the index */
+export function searchBM25(query: string, limit: number = 20): BM25SearchResult[] {
+  if (index === null) return [];
 
-  const hits = activeIndex.search(query, {
+  const hits = index.search(query, {
     fuzzy: 0.2,
     prefix: true,
     boost: { name: 2 },
   });
 
-  const capped = hits.slice(0, limit);
   const output: BM25SearchResult[] = [];
-  let rank = 1;
+  const capped = hits.slice(0, limit);
 
-  capped.forEach((h) => {
-    output.push({ filePath: h.id, score: h.score, rank });
-    rank++;
-  });
+  for (let r = 0; r < capped.length; r++) {
+    output.push({ filePath: capped[r].id, score: capped[r].score, rank: r + 1 });
+  }
 
   return output;
-};
+}
 
-/** True when the index is populated and queryable. */
-export const isBM25Ready = (): boolean => {
-  return activeIndex !== null && docTotal > 0;
-};
+/* Whether the index has been populated and is queryable */
+export function isBM25Ready(): boolean {
+  return index !== null && indexedCount > 0;
+}
 
-/** Index statistics. */
-export const getBM25Stats = (): { documentCount: number; termCount: number } => {
-  if (activeIndex === null) {
+/* Current index size metrics */
+export function getBM25Stats(): { documentCount: number; termCount: number } {
+  if (index === null) {
     return { documentCount: 0, termCount: 0 };
   }
-  return { documentCount: docTotal, termCount: activeIndex.termCount };
-};
+  return { documentCount: indexedCount, termCount: index.termCount };
+}
 
-/** Drop the index (cleanup or re-index). */
-export const clearBM25Index = (): void => {
-  activeIndex = null;
-  docTotal = 0;
-};
+/* Tear down the index for re-indexing or cleanup */
+export function clearBM25Index(): void {
+  index = null;
+  indexedCount = 0;
+}
