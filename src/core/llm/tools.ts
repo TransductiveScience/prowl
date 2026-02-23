@@ -2,32 +2,32 @@ import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { WebGPUNotAvailableError, embedText, embeddingToArray, initEmbedder, isEmbedderReady } from '../embeddings/embedder';
 
-// ── Helpers ──
+/* ── Shared utilities ────────────────────────────────── */
 
-function sanitizeCypher(raw: string): string {
+function escapeCypher(raw: string): string {
   return raw.replace(/'/g, "''");
 }
 
-function extractRowField(row: any, arrayIdx: number, objectKey: string): any {
+function pickField(row: any, arrayIdx: number, objectKey: string): any {
   return Array.isArray(row) ? row[arrayIdx] : row[objectKey];
 }
 
-function renderConfidence(rawConf: number | null | undefined): number {
+function confPercent(rawConf: number | null | undefined): number {
   return rawConf != null ? Math.round(rawConf * 100) : 100;
 }
 
-function buildConnectionArrow(
+function formatEdgeArrow(
   entry: { name: string; type: string; confidence?: number },
-  dir: 'outbound' | 'inbound'
+  dir: 'outbound' | 'inbound',
 ): string {
-  const pct = renderConfidence(entry.confidence);
+  const pct = confPercent(entry.confidence);
   if (dir === 'outbound') {
     return `-[${entry.type} ${pct}%]-> ${entry.name}`;
   }
   return `<-[${entry.type} ${pct}%]- ${entry.name}`;
 }
 
-function detectTestPath(fp: string): boolean {
+function isTestPath(fp: string): boolean {
   if (!fp) return false;
   const lower = fp.toLowerCase();
   return (
@@ -42,16 +42,16 @@ function detectTestPath(fp: string): boolean {
   );
 }
 
-function escapeForRegex(value: string): string {
+function regexSafe(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-async function fetchNodeConnections(
+async function queryConnections(
   nodeIdentifier: string,
-  runQuery: (cypher: string) => Promise<any[]>
+  runQuery: (cypher: string) => Promise<any[]>,
 ): Promise<{ outbound: any[]; inbound: any[] }> {
   const nodeKind = nodeIdentifier.split(':')[0];
-  const escaped = sanitizeCypher(nodeIdentifier);
+  const escaped = escapeCypher(nodeIdentifier);
   const stmt = `
     MATCH (n:${nodeKind} {id: '${escaped}'})
     OPTIONAL MATCH (n)-[r1:CodeEdge]->(dst)
@@ -76,12 +76,12 @@ async function fetchNodeConnections(
   }
 }
 
-async function fetchClusterLabel(
+async function queryClusterName(
   nodeIdentifier: string,
-  runQuery: (cypher: string) => Promise<any[]>
+  runQuery: (cypher: string) => Promise<any[]>,
 ): Promise<string> {
   const nodeKind = nodeIdentifier.split(':')[0];
-  const escaped = sanitizeCypher(nodeIdentifier);
+  const escaped = escapeCypher(nodeIdentifier);
   const stmt = `
     MATCH (n:${nodeKind} {id: '${escaped}'})
     MATCH (n)-[:CodeEdge {type: 'MEMBER_OF'}]->(c:Community)
@@ -91,21 +91,21 @@ async function fetchClusterLabel(
   try {
     const rows = await runQuery(stmt);
     if (rows.length > 0) {
-      const val = extractRowField(rows[0], 0, 'label');
+      const val = pickField(rows[0], 0, 'label');
       if (val) return val;
     }
   } catch {
-    // cluster lookup is optional
+    /* cluster lookup is best-effort */
   }
   return 'Unclustered';
 }
 
-async function fetchProcessParticipation(
+async function queryProcessMembership(
   nodeIdentifier: string,
-  runQuery: (cypher: string) => Promise<any[]>
+  runQuery: (cypher: string) => Promise<any[]>,
 ): Promise<Array<{ id: string; label: string; step?: number; stepCount?: number }>> {
   const nodeKind = nodeIdentifier.split(':')[0];
-  const escaped = sanitizeCypher(nodeIdentifier);
+  const escaped = escapeCypher(nodeIdentifier);
   const stmt = `
     MATCH (n:${nodeKind} {id: '${escaped}'})
     MATCH (n)-[r:CodeEdge {type: 'STEP_IN_PROCESS'}]->(p:Process)
@@ -116,31 +116,31 @@ async function fetchProcessParticipation(
   try {
     const rows = await runQuery(stmt);
     for (const row of rows) {
-      const pid = extractRowField(row, 0, 'id');
-      const pLabel = extractRowField(row, 1, 'label');
-      const pStep = extractRowField(row, 2, 'step');
-      const pStepCount = extractRowField(row, 3, 'stepCount');
+      const pid = pickField(row, 0, 'id');
+      const pLabel = pickField(row, 1, 'label');
+      const pStep = pickField(row, 2, 'step');
+      const pStepCount = pickField(row, 3, 'stepCount');
       if (pid && pLabel) {
         output.push({ id: pid, label: pLabel, step: pStep, stepCount: pStepCount });
       }
     }
   } catch {
-    // process lookup is optional
+    /* process lookup is best-effort */
   }
   return output;
 }
 
-// ── Tool Builders ──
+/* ── Tool factories ──────────────────────────────────── */
 
-function buildSearchTool(
+function createSearchTool(
   runQuery: (cypher: string) => Promise<any[]>,
   doSemanticSearch: (query: string, k?: number, maxDistance?: number) => Promise<any[]>,
   doHybridSearch: (query: string, k?: number) => Promise<any[]>,
   embeddingAvailable: () => boolean,
-  bm25Available: () => boolean
+  bm25Available: () => boolean,
 ) {
-  type ProcessEntry = { id: string; label: string; step?: number; stepCount?: number };
-  type MatchRecord = {
+  type ProcRef = { id: string; label: string; step?: number; stepCount?: number };
+  type ResultEntry = {
     rank: number;
     nid: string;
     symbolName: string;
@@ -151,7 +151,7 @@ function buildSearchTool(
     relevance: string;
     connectionText: string;
     cluster: string;
-    procs: ProcessEntry[];
+    procs: ProcRef[];
   };
 
   return tool(
@@ -159,31 +159,31 @@ function buildSearchTool(
       const maxItems = limit ?? 10;
       const grouped = groupByProcess ?? true;
 
-      let rawResults: any[] = [];
+      let results: any[] = [];
 
       if (bm25Available()) {
         try {
-          rawResults = await doHybridSearch(query, maxItems);
+          results = await doHybridSearch(query, maxItems);
         } catch {
           if (embeddingAvailable()) {
-            rawResults = await doSemanticSearch(query, maxItems);
+            results = await doSemanticSearch(query, maxItems);
           }
         }
       } else if (embeddingAvailable()) {
-        rawResults = await doSemanticSearch(query, maxItems);
+        results = await doSemanticSearch(query, maxItems);
       } else {
         return 'Search is not available. Please load a repository first.';
       }
 
-      if (rawResults.length === 0) {
+      if (results.length === 0) {
         return `No code found matching "${query}". Try different terms or use grep for exact patterns.`;
       }
 
-      const bounded = rawResults.slice(0, maxItems);
-      const enriched: MatchRecord[] = [];
+      const limited = results.slice(0, maxItems);
+      const entries: ResultEntry[] = [];
 
-      for (let pos = 0; pos < bounded.length; pos++) {
-        const hit = bounded[pos];
+      for (let pos = 0; pos < limited.length; pos++) {
+        const hit = limited[pos];
         const nid = hit.nodeId || hit.id || '';
         const symbolName = hit.name || hit.filePath?.split('/').pop() || 'Unknown';
         const nodeLabel = hit.label || 'File';
@@ -194,19 +194,19 @@ function buildSearchTool(
 
         let connectionText = '';
         if (nid) {
-          const { outbound, inbound } = await fetchNodeConnections(nid, runQuery);
-          const outSlice = outbound.slice(0, 3).map((c: any) => buildConnectionArrow(c, 'outbound'));
-          const inSlice = inbound.slice(0, 3).map((c: any) => buildConnectionArrow(c, 'inbound'));
+          const { outbound, inbound } = await queryConnections(nid, runQuery);
+          const outSlice = outbound.slice(0, 3).map((c: any) => formatEdgeArrow(c, 'outbound'));
+          const inSlice = inbound.slice(0, 3).map((c: any) => formatEdgeArrow(c, 'inbound'));
           const merged = [...outSlice, ...inSlice];
           if (merged.length > 0) {
             connectionText = `\n    Connections: ${merged.join(', ')}`;
           }
         }
 
-        const cluster = nid ? await fetchClusterLabel(nid, runQuery) : 'Unclustered';
-        const procs = nid ? await fetchProcessParticipation(nid, runQuery) : [];
+        const cluster = nid ? await queryClusterName(nid, runQuery) : 'Unclustered';
+        const procs = nid ? await queryProcessMembership(nid, runQuery) : [];
 
-        enriched.push({
+        entries.push({
           rank: pos + 1,
           nid,
           symbolName,
@@ -221,50 +221,50 @@ function buildSearchTool(
         });
       }
 
-      const renderSingle = (rec: MatchRecord, stepCtx?: ProcessEntry) => {
+      const renderSingle = (rec: ResultEntry, stepCtx?: ProcRef) => {
         const stepSuffix = stepCtx?.step ? ` (step ${stepCtx.step}/${stepCtx.stepCount ?? '?'})` : '';
         return `[${rec.rank}] ${rec.nodeLabel}: ${rec.symbolName}${rec.relevance}${stepSuffix}\n    ID: ${rec.nid}\n    File: ${rec.path}${rec.lineRange}\n    Cluster: ${rec.cluster}\n    Found by: ${rec.foundVia}${rec.connectionText}`;
       };
 
       if (!grouped) {
-        return `Found ${rawResults.length} matches:\n\n${enriched.map(r => renderSingle(r)).join('\n\n')}`;
+        return `Found ${results.length} matches:\n\n${entries.map(r => renderSingle(r)).join('\n\n')}`;
       }
 
-      const buckets = new Map<string, { title: string; totalSteps?: number; items: { rec: MatchRecord; step?: number; stepCount?: number }[] }>();
-      const orphanKey = '__orphan__';
+      const groups = new Map<string, { title: string; totalSteps?: number; items: { rec: ResultEntry; step?: number; stepCount?: number }[] }>();
+      const ungroupedKey = '__ungrouped__';
 
-      for (const rec of enriched) {
+      for (const rec of entries) {
         if (rec.procs.length === 0) {
-          if (!buckets.has(orphanKey)) {
-            buckets.set(orphanKey, { title: 'No process', items: [] });
+          if (!groups.has(ungroupedKey)) {
+            groups.set(ungroupedKey, { title: 'No process', items: [] });
           }
-          buckets.get(orphanKey)!.items.push({ rec });
+          groups.get(ungroupedKey)!.items.push({ rec });
         } else {
           for (const p of rec.procs) {
-            if (!buckets.has(p.id)) {
-              buckets.set(p.id, { title: p.label, totalSteps: p.stepCount, items: [] });
+            if (!groups.has(p.id)) {
+              groups.set(p.id, { title: p.label, totalSteps: p.stepCount, items: [] });
             }
-            buckets.get(p.id)!.items.push({ rec, step: p.step, stepCount: p.stepCount });
+            groups.get(p.id)!.items.push({ rec, step: p.step, stepCount: p.stepCount });
           }
         }
       }
 
-      const ordered = Array.from(buckets.entries())
+      const ordered = Array.from(groups.entries())
         .sort((x, y) => y[1].items.length - x[1].items.length);
 
       const outputParts: string[] = [];
-      outputParts.push(`Found ${rawResults.length} matches grouped by process:`);
+      outputParts.push(`Found ${results.length} matches grouped by process:`);
       outputParts.push('');
 
-      for (const [bucketId, bucket] of ordered) {
-        const stepNote = bucket.totalSteps ? `, ${bucket.totalSteps} steps` : '';
-        const heading = bucketId === orphanKey
-          ? `NO PROCESS (${bucket.items.length} matches)`
-          : `PROCESS: ${bucket.title} (${bucket.items.length} matches${stepNote})`;
+      for (const [gid, group] of ordered) {
+        const stepNote = group.totalSteps ? `, ${group.totalSteps} steps` : '';
+        const heading = gid === ungroupedKey
+          ? `NO PROCESS (${group.items.length} matches)`
+          : `PROCESS: ${group.title} (${group.items.length} matches${stepNote})`;
         outputParts.push(heading);
-        for (const entry of bucket.items) {
+        for (const entry of group.items) {
           const ctx = entry.step
-            ? { id: bucketId, label: bucket.title, step: entry.step, stepCount: entry.stepCount }
+            ? { id: gid, label: group.title, step: entry.step, stepCount: entry.stepCount }
             : undefined;
           outputParts.push(renderSingle(entry.rec, ctx));
         }
@@ -281,13 +281,13 @@ function buildSearchTool(
         groupByProcess: z.boolean().optional().nullable().describe('Organize results by process (default: true)'),
         limit: z.number().optional().nullable().describe('Maximum number of results (default: 10)'),
       }),
-    }
+    },
   );
 }
 
-function buildCypherTool(
+function createCypherTool(
   runQuery: (cypher: string) => Promise<any[]>,
-  embeddingAvailable: () => boolean
+  embeddingAvailable: () => boolean,
 ) {
   return tool(
     async ({ query, cypher }: { query?: string; cypher: string }) => {
@@ -348,7 +348,7 @@ function buildCypherTool(
         }
 
         const fallbackLines = queryResult.slice(0, 50).map((row, idx) =>
-          `[${idx + 1}] ${JSON.stringify(row)}`
+          `[${idx + 1}] ${JSON.stringify(row)}`,
         );
         const overflow = queryResult.length > 50 ? `\n... (${queryResult.length - 50} more)` : '';
         return `${queryResult.length} results:\n${fallbackLines.join('\n')}${overflow}`;
@@ -383,12 +383,12 @@ MATCH (n:Function {id: emb.nodeId}) RETURN n.name, n.filePath, distance`,
         cypher: z.string().describe('Cypher statement to run'),
         query: z.string().optional().nullable().describe('Natural-language query to embed (needed when cypher includes {{QUERY_VECTOR}})'),
       }),
-    }
+    },
   );
 }
 
-function buildGrepTool(
-  fileStore: Map<string, string>
+function createGrepTool(
+  fileStore: Map<string, string>,
 ) {
   return tool(
     async ({ pattern, fileFilter, caseSensitive, maxResults }: {
@@ -450,12 +450,12 @@ function buildGrepTool(
         caseSensitive: z.boolean().optional().nullable().describe('Match case exactly (default: false)'),
         maxResults: z.number().optional().nullable().describe('Result cap (default: 100)'),
       }),
-    }
+    },
   );
 }
 
-function buildReadTool(
-  fileStore: Map<string, string>
+function createReadTool(
+  fileStore: Map<string, string>,
 ) {
   return tool(
     async ({ filePath }: { filePath: string }) => {
@@ -527,12 +527,12 @@ function buildReadTool(
       schema: z.object({
         filePath: z.string().describe('Path of the file to read (partial paths like "src/utils.ts" are resolved automatically)'),
       }),
-    }
+    },
   );
 }
 
-function buildOverviewTool(
-  runQuery: (cypher: string) => Promise<any[]>
+function createOverviewTool(
+  runQuery: (cypher: string) => Promise<any[]>,
 ) {
   return tool(
     async () => {
@@ -568,33 +568,33 @@ function buildOverviewTool(
         ]);
 
         const clusterTable = clusterRows.map((row: any) => {
-          const lbl = extractRowField(row, 1, 'label');
-          const cnt = extractRowField(row, 3, 'symbolCount');
-          const coh = extractRowField(row, 2, 'cohesion');
-          const desc = extractRowField(row, 4, 'description');
+          const lbl = pickField(row, 1, 'label');
+          const cnt = pickField(row, 3, 'symbolCount');
+          const coh = pickField(row, 2, 'cohesion');
+          const desc = pickField(row, 4, 'description');
           const cohStr = coh != null ? Number(coh).toFixed(2) : '';
           return `| ${lbl || ''} | ${cnt ?? ''} | ${cohStr} | ${desc ?? ''} |`;
         });
 
         const processTable = processRows.map((row: any) => {
-          const lbl = extractRowField(row, 1, 'label');
-          const steps = extractRowField(row, 3, 'stepCount');
-          const kind = extractRowField(row, 2, 'type');
-          const comms = extractRowField(row, 4, 'communities');
+          const lbl = pickField(row, 1, 'label');
+          const steps = pickField(row, 3, 'stepCount');
+          const kind = pickField(row, 2, 'type');
+          const comms = pickField(row, 4, 'communities');
           const commCount = Array.isArray(comms) ? comms.length : (comms ? 1 : 0);
           return `| ${lbl || ''} | ${steps ?? ''} | ${kind ?? ''} | ${commCount} |`;
         });
 
         const depList = depRows.map((row: any) => {
-          const src = extractRowField(row, 0, 'from');
-          const dst = extractRowField(row, 1, 'to');
-          const n = extractRowField(row, 2, 'calls');
+          const src = pickField(row, 0, 'from');
+          const dst = pickField(row, 1, 'to');
+          const n = pickField(row, 2, 'calls');
           return `- ${src} -> ${dst} (${n} calls)`;
         });
 
         const critList = critRows.map((row: any) => {
-          const lbl = extractRowField(row, 0, 'label');
-          const steps = extractRowField(row, 1, 'steps');
+          const lbl = pickField(row, 0, 'label');
+          const steps = pickField(row, 1, 'steps');
           return `- ${lbl} (${steps} steps)`;
         });
 
@@ -623,15 +623,15 @@ function buildOverviewTool(
       name: 'overview',
       description: 'High-level codebase map: lists every cluster and process, plus cross-cluster dependency edges.',
       schema: z.object({}),
-    }
+    },
   );
 }
 
-function buildExploreTool(
-  runQuery: (cypher: string) => Promise<any[]>
+function createExploreTool(
+  runQuery: (cypher: string) => Promise<any[]>,
 ) {
   async function resolveProcess(nameOrId: string) {
-    const escaped = sanitizeCypher(nameOrId);
+    const escaped = escapeCypher(nameOrId);
     const stmt = `
       MATCH (p:Process)
       WHERE p.id = '${escaped}' OR p.label = '${escaped}'
@@ -643,7 +643,7 @@ function buildExploreTool(
   }
 
   async function resolveCommunity(nameOrId: string) {
-    const escaped = sanitizeCypher(nameOrId);
+    const escaped = escapeCypher(nameOrId);
     const stmt = `
       MATCH (c:Community)
       WHERE c.id = '${escaped}' OR c.label = '${escaped}' OR c.heuristicLabel = '${escaped}'
@@ -655,7 +655,7 @@ function buildExploreTool(
   }
 
   async function resolveSymbol(nameOrId: string) {
-    const escaped = sanitizeCypher(nameOrId);
+    const escaped = escapeCypher(nameOrId);
     const stmt = `
       MATCH (n)
       WHERE n.name = '${escaped}' OR n.id = '${escaped}' OR n.filePath = '${escaped}'
@@ -667,11 +667,11 @@ function buildExploreTool(
   }
 
   async function renderProcessDetail(row: any): Promise<string> {
-    const pid = extractRowField(row, 0, 'id');
-    const lbl = extractRowField(row, 1, 'label');
-    const pKind = extractRowField(row, 2, 'type');
-    const totalSteps = extractRowField(row, 3, 'stepCount');
-    const escapedPid = sanitizeCypher(pid);
+    const pid = pickField(row, 0, 'id');
+    const lbl = pickField(row, 1, 'label');
+    const pKind = pickField(row, 2, 'type');
+    const totalSteps = pickField(row, 3, 'stepCount');
+    const escapedPid = escapeCypher(pid);
 
     const [stepRows, clusterRows] = await Promise.all([
       runQuery(`
@@ -689,15 +689,15 @@ function buildExploreTool(
     ]);
 
     const stepLines = stepRows.map((r: any) => {
-      const nm = extractRowField(r, 0, 'name');
-      const fp = extractRowField(r, 1, 'filePath');
-      const st = extractRowField(r, 2, 'step');
+      const nm = pickField(r, 0, 'name');
+      const fp = pickField(r, 1, 'filePath');
+      const st = pickField(r, 2, 'step');
       return `- ${st}. ${nm} (${fp || 'n/a'})`;
     });
 
     const clusterLines = clusterRows.map((r: any) => {
-      const cl = extractRowField(r, 1, 'label');
-      const cd = extractRowField(r, 2, 'description');
+      const cl = pickField(r, 1, 'label');
+      const cd = pickField(r, 2, 'description');
       return `- ${cl}${cd ? ` — ${cd}` : ''}`;
     });
 
@@ -715,12 +715,12 @@ function buildExploreTool(
   }
 
   async function renderClusterDetail(row: any): Promise<string> {
-    const cid = extractRowField(row, 0, 'id');
-    const lbl = extractRowField(row, 1, 'label');
-    const coh = extractRowField(row, 2, 'cohesion');
-    const symCount = extractRowField(row, 3, 'symbolCount');
-    const desc = extractRowField(row, 4, 'description');
-    const escapedCid = sanitizeCypher(cid);
+    const cid = pickField(row, 0, 'id');
+    const lbl = pickField(row, 1, 'label');
+    const coh = pickField(row, 2, 'cohesion');
+    const symCount = pickField(row, 3, 'symbolCount');
+    const desc = pickField(row, 4, 'description');
+    const escapedCid = escapeCypher(cid);
 
     const [memberRows, procRows] = await Promise.all([
       runQuery(`
@@ -738,15 +738,15 @@ function buildExploreTool(
     ]);
 
     const memberLines = memberRows.map((r: any) => {
-      const nm = extractRowField(r, 0, 'name');
-      const fp = extractRowField(r, 1, 'filePath');
-      const nt = extractRowField(r, 2, 'nodeType');
+      const nm = pickField(r, 0, 'name');
+      const fp = pickField(r, 1, 'filePath');
+      const nt = pickField(r, 2, 'nodeType');
       return `- ${nt}: ${nm} (${fp || 'n/a'})`;
     });
 
     const procLines = procRows.map((r: any) => {
-      const pl = extractRowField(r, 1, 'label');
-      const ps = extractRowField(r, 2, 'stepCount');
+      const pl = pickField(r, 1, 'label');
+      const ps = pickField(r, 2, 'stepCount');
       return `- ${pl} (${ps} steps)`;
     });
 
@@ -765,11 +765,11 @@ function buildExploreTool(
   }
 
   async function renderSymbolDetail(row: any): Promise<string> {
-    const nid = extractRowField(row, 0, 'id');
-    const nm = extractRowField(row, 1, 'name');
-    const fp = extractRowField(row, 2, 'filePath');
-    const nt = extractRowField(row, 3, 'nodeType');
-    const escapedNid = sanitizeCypher(String(nid));
+    const nid = pickField(row, 0, 'id');
+    const nm = pickField(row, 1, 'name');
+    const fp = pickField(row, 2, 'filePath');
+    const nt = pickField(row, 3, 'nodeType');
+    const escapedNid = escapeCypher(String(nid));
 
     const [clusterRows, procRows, connRows] = await Promise.all([
       runQuery(`
@@ -795,13 +795,13 @@ function buildExploreTool(
       `),
     ]);
 
-    const clusterLbl = clusterRows.length > 0 ? extractRowField(clusterRows[0], 0, 'label') : 'Unclustered';
-    const clusterDesc = clusterRows.length > 0 ? extractRowField(clusterRows[0], 1, 'description') : '';
+    const clusterLbl = clusterRows.length > 0 ? pickField(clusterRows[0], 0, 'label') : 'Unclustered';
+    const clusterDesc = clusterRows.length > 0 ? pickField(clusterRows[0], 1, 'description') : '';
 
     const procLines = procRows.map((r: any) => {
-      const pl = extractRowField(r, 0, 'label');
-      const ps = extractRowField(r, 1, 'step');
-      const psc = extractRowField(r, 2, 'stepCount');
+      const pl = pickField(r, 0, 'label');
+      const ps = pickField(r, 1, 'step');
+      const psc = pickField(r, 2, 'stepCount');
       return `- ${pl} (step ${ps}/${psc ?? '?'})`;
     });
 
@@ -812,8 +812,8 @@ function buildExploreTool(
       const rawIn = Array.isArray(cr) ? cr[1] : (cr.incoming || []);
       const outFiltered = (rawOut || []).filter((c: any) => c && c.name).slice(0, 5);
       const inFiltered = (rawIn || []).filter((c: any) => c && c.name).slice(0, 5);
-      const outArrows = outFiltered.map((c: any) => buildConnectionArrow(c, 'outbound'));
-      const inArrows = inFiltered.map((c: any) => buildConnectionArrow(c, 'inbound'));
+      const outArrows = outFiltered.map((c: any) => formatEdgeArrow(c, 'outbound'));
+      const inArrows = inFiltered.map((c: any) => formatEdgeArrow(c, 'inbound'));
       if (outArrows.length || inArrows.length) {
         connText = [...outArrows, ...inArrows].join(', ');
       }
@@ -870,13 +870,13 @@ function buildExploreTool(
         target: z.string().describe('Name or ID of the symbol, cluster, or process to inspect'),
         type: z.enum(['symbol', 'cluster', 'process']).optional().nullable().describe('Target kind hint (auto-detected when omitted)'),
       }),
-    }
+    },
   );
 }
 
-function buildImpactTool(
+function createImpactTool(
   runQuery: (cypher: string) => Promise<any[]>,
-  fileStore: Map<string, string>
+  fileStore: Map<string, string>,
 ) {
   interface AffectedNode {
     id: string;
@@ -945,10 +945,10 @@ function buildImpactTool(
     dir: 'upstream' | 'downstream',
     relFilter: string,
     minConf: number,
-    hopDepth: number
+    hopDepth: number,
   ): string {
-    const escapedId = sanitizeCypher(targetId);
-    const escapedPath = sanitizeCypher(targetFilePath || target);
+    const escapedId = escapeCypher(targetId);
+    const escapedPath = escapeCypher(targetFilePath || target);
 
     if (hopDepth === 1) {
       if (dir === 'upstream') {
@@ -1037,7 +1037,6 @@ function buildImpactTool(
         `;
     }
 
-    // depth 3
     const hopLimit = 100;
     return dir === 'upstream'
       ? `
@@ -1092,7 +1091,7 @@ function buildImpactTool(
       const relFilterExpr = activeTypes.map(t => `'${t}'`).join(', ');
 
       const isPathLookup = target.includes('/');
-      const escapedTarget = sanitizeCypher(target);
+      const escapedTarget = escapeCypher(target);
 
       const findStmt = isPathLookup
         ? `MATCH (n) WHERE n.filePath IS NOT NULL AND n.filePath CONTAINS '${escapedTarget}' RETURN n.id AS id, label(n) AS nodeType, n.filePath AS filePath LIMIT 10`
@@ -1109,7 +1108,7 @@ function buildImpactTool(
         return `Could not find "${target}" in the codebase. Try using the search tool first to find the exact name.`;
       }
 
-      const allFilePaths = foundNodes.map((r: any) => extractRowField(r, 2, 'filePath')).filter(Boolean);
+      const allFilePaths = foundNodes.map((r: any) => pickField(r, 2, 'filePath')).filter(Boolean);
 
       if (foundNodes.length > 1 && !target.includes('/')) {
         return `\u26a0\ufe0f AMBIGUOUS TARGET: Multiple files named "${target}" found:\n\n${allFilePaths.map((p: string, i: number) => `${i + 1}. ${p}`).join('\n')}\n\nPlease specify which file you mean by using a more specific path, e.g.:\n- impact("${allFilePaths[0].split('/').slice(-3).join('/')}")\n- impact("${allFilePaths[1]?.split('/').slice(-3).join('/') || allFilePaths[0]}")`;
@@ -1118,7 +1117,7 @@ function buildImpactTool(
       let chosen = foundNodes[0];
       if (target.includes('/') && foundNodes.length > 1) {
         const exact = foundNodes.find((r: any) => {
-          const rp = extractRowField(r, 2, 'filePath');
+          const rp = pickField(r, 2, 'filePath');
           return rp && rp.toLowerCase().includes(target.toLowerCase());
         });
         if (exact) {
@@ -1128,9 +1127,9 @@ function buildImpactTool(
         }
       }
 
-      const chosenId = extractRowField(chosen, 0, 'id');
-      const chosenType = extractRowField(chosen, 1, 'nodeType');
-      const chosenPath = extractRowField(chosen, 2, 'filePath');
+      const chosenId = pickField(chosen, 0, 'id');
+      const chosenType = pickField(chosen, 1, 'nodeType');
+      const chosenPath = pickField(chosen, 2, 'filePath');
       const isFileNode = chosenType === 'File';
 
       const multipleMatchWarning = '';
@@ -1139,20 +1138,20 @@ function buildImpactTool(
 
       depthPromises.push(
         runQuery(buildDepthQuery(chosenId, chosenPath, target, isFileNode, direction, relFilterExpr, confThreshold, 1))
-          .catch(e => { if (import.meta.env.DEV) console.warn('Impact d=1 query failed:', e); return []; })
+          .catch(e => { if (import.meta.env.DEV) console.warn('Impact d=1 query failed:', e); return []; }),
       );
 
       if (traversalDepth >= 2) {
         depthPromises.push(
           runQuery(buildDepthQuery(chosenId, chosenPath, target, isFileNode, direction, relFilterExpr, confThreshold, 2))
-            .catch(e => { if (import.meta.env.DEV) console.warn('Impact d=2 query failed:', e); return []; })
+            .catch(e => { if (import.meta.env.DEV) console.warn('Impact d=2 query failed:', e); return []; }),
         );
       }
 
       if (traversalDepth >= 3) {
         depthPromises.push(
           runQuery(buildDepthQuery(chosenId, chosenPath, target, isFileNode, direction, relFilterExpr, confThreshold, 3))
-            .catch(e => { if (import.meta.env.DEV) console.warn('Impact d=3 query failed:', e); return []; })
+            .catch(e => { if (import.meta.env.DEV) console.warn('Impact d=3 query failed:', e); return []; }),
         );
       }
 
@@ -1166,7 +1165,7 @@ function buildImpactTool(
         const d = depthIdx + 1;
         for (const row of rows) {
           const parsed = parseAffectedRow(row);
-          if (!showTestFiles && detectTestPath(parsed.filePath)) continue;
+          if (!showTestFiles && isTestPath(parsed.filePath)) continue;
           if (parsed.id && !visitedIds.has(parsed.id)) {
             visitedIds.add(parsed.id);
             if (!depthBuckets.has(d)) depthBuckets.set(d, []);
@@ -1182,7 +1181,7 @@ function buildImpactTool(
         if (isFileNode) {
           const targetFileName = (chosenPath || target).split('/').pop() || target;
           const baseName = targetFileName.replace(/\.[^/.]+$/, '');
-          const refPattern = new RegExp(`\\b${escapeForRegex(baseName)}\\b`, 'g');
+          const refPattern = new RegExp(`\\b${regexSafe(baseName)}\\b`, 'g');
           const textHints: Array<{ file: string; line: number; content: string }> = [];
           const hintCap = 15;
 
@@ -1228,12 +1227,12 @@ function buildImpactTool(
 
       const ctxIdLimit = 500;
       const ctxIds = collectedIds.slice(0, ctxIdLimit);
-      const idListExpr = ctxIds.map(id => `'${sanitizeCypher(id)}'`).join(', ');
+      const idListExpr = ctxIds.map(id => `'${escapeCypher(id)}'`).join(', ');
       let impactedProcesses: Array<{ label: string; hits: number; minStep: number | null; stepCount: number | null }> = [];
       let impactedClusters: Array<{ label: string; hits: number; impact: string }> = [];
 
       if (ctxIds.length > 0) {
-        const d1IdExpr = d1Nodes.map(n => `'${sanitizeCypher(n.id)}'`).join(', ');
+        const d1IdExpr = d1Nodes.map(n => `'${escapeCypher(n.id)}'`).join(', ');
 
         const [procRows, clusterRows, directClusterRows] = await Promise.all([
           runQuery(`
@@ -1261,20 +1260,20 @@ function buildImpactTool(
 
         const directClusterNames = new Set<string>();
         directClusterRows.forEach((r: any) => {
-          const lbl = extractRowField(r, 0, 'label');
+          const lbl = pickField(r, 0, 'label');
           if (lbl) directClusterNames.add(lbl);
         });
 
         impactedProcesses = procRows.map((r: any) => ({
-          label: extractRowField(r, 0, 'label'),
-          hits: extractRowField(r, 1, 'hits'),
-          minStep: extractRowField(r, 2, 'minStep'),
-          stepCount: extractRowField(r, 3, 'stepCount'),
+          label: pickField(r, 0, 'label'),
+          hits: pickField(r, 1, 'hits'),
+          minStep: pickField(r, 2, 'minStep'),
+          stepCount: pickField(r, 3, 'stepCount'),
         }));
 
         impactedClusters = clusterRows.map((r: any) => {
-          const lbl = extractRowField(r, 0, 'label');
-          const hits = extractRowField(r, 1, 'hits');
+          const lbl = pickField(r, 0, 'label');
+          const hits = pickField(r, 1, 'hits');
           return { label: lbl, hits, impact: directClusterNames.has(lbl) ? 'direct' : 'indirect' };
         });
       }
@@ -1382,11 +1381,11 @@ Also reports:
         includeTests: z.boolean().optional().nullable().describe('Include test files (default: false — skips .test.ts, .spec.ts, __tests__)'),
         minConfidence: z.number().optional().nullable().describe('Confidence floor 0-1 (default: 0.7 — filters out fuzzy/inferred edges)'),
       }),
-    }
+    },
   );
 }
 
-// ── Public API ──
+/* ── Public API ──────────────────────────────────────── */
 
 export const buildAnalysisTools = (
   executeQuery: (cypher: string) => Promise<any[]>,
@@ -1395,15 +1394,15 @@ export const buildAnalysisTools = (
   hybridSearch: (query: string, k?: number) => Promise<any[]>,
   isEmbeddingReady: () => boolean,
   isBM25Ready: () => boolean,
-  fileContents: Map<string, string>
+  fileContents: Map<string, string>,
 ) => {
   return [
-    buildSearchTool(executeQuery, semanticSearch, hybridSearch, isEmbeddingReady, isBM25Ready),
-    buildCypherTool(executeQuery, isEmbeddingReady),
-    buildGrepTool(fileContents),
-    buildReadTool(fileContents),
-    buildOverviewTool(executeQuery),
-    buildExploreTool(executeQuery),
-    buildImpactTool(executeQuery, fileContents),
+    createSearchTool(executeQuery, semanticSearch, hybridSearch, isEmbeddingReady, isBM25Ready),
+    createCypherTool(executeQuery, isEmbeddingReady),
+    createGrepTool(fileContents),
+    createReadTool(fileContents),
+    createOverviewTool(executeQuery),
+    createExploreTool(executeQuery),
+    createImpactTool(executeQuery, fileContents),
   ];
 };

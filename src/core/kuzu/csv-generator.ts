@@ -1,66 +1,63 @@
 /**
- * RFC 4180 CSV generation for KuzuDB bulk loading.
- * Produces one CSV per node table and a single edge CSV.
- * All text fields are always double-quoted to safely embed source code.
+ * Generates RFC 4180 CSV payloads for KuzuDB bulk import.
+ * One CSV per node table plus a single edge CSV.
+ * All text values are unconditionally double-quoted so
+ * embedded source code never breaks the field boundary.
  */
 
 import { CodeGraph, GraphNode, NodeLabel } from '../graph/types';
 import { NODE_TABLES, NodeTableName } from './schema';
 
-// -- Field-level helpers -----------------------------------------------------
+/* ── Field-level utilities ───────────────────────────── */
 
-/** Remove control characters and invalid UTF-8 from CSV fields. */
-const normalizeText = (raw: string): string => {
-  let cleaned = raw.replace(/\r\n/g, '\n');
-  cleaned = cleaned.replace(/\r/g, '\n');
-  // Drop control characters except horizontal tab and newline
-  cleaned = cleaned.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
-  // Remove lone surrogate code units and Unicode specials
-  cleaned = cleaned.replace(/[\uD800-\uDFFF]/g, '');
-  cleaned = cleaned.replace(/[\uFFFE\uFFFF]/g, '');
-  return cleaned;
-};
+/* Strip control characters and broken surrogate pairs from a field */
+function sanitizeField(raw: string): string {
+  let out = raw.replace(/\r\n/g, '\n');
+  out = out.replace(/\r/g, '\n');
+  out = out.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+  out = out.replace(/[\uD800-\uDFFF]/g, '');
+  out = out.replace(/[\uFFFE\uFFFF]/g, '');
+  return out;
+}
 
-/** Double-quote a value, escaping interior quotes per RFC 4180. */
-const quoteField = (val: string | number | undefined | null): string => {
+/* Wrap a value in double-quotes, escaping inner quotes per RFC 4180 */
+function csvQuote(val: string | number | undefined | null): string {
   if (val === undefined || val === null) return '""';
-  const text = normalizeText(String(val));
-  return '"' + text.replace(/"/g, '""') + '"';
-};
+  const safe = sanitizeField(String(val));
+  return '"' + safe.replace(/"/g, '""') + '"';
+}
 
-/** Unquoted numeric field with fallback. */
-const numericField = (val: number | undefined | null, fallback: number = -1): string =>
-  (val === undefined || val === null) ? String(fallback) : String(val);
+/* Emit an unquoted numeric literal, falling back when missing */
+function numVal(val: number | undefined | null, fallback: number = -1): string {
+  return (val === undefined || val === null) ? String(fallback) : String(val);
+}
 
-// -- Content extraction ------------------------------------------------------
+/* ── Content extraction ──────────────────────────────── */
 
-/** Heuristic binary-content check. */
-const detectBinary = (text: string): boolean => {
+/* Check whether the leading bytes look like binary rather than text */
+function isBinaryContent(text: string): boolean {
   if (!text || text.length === 0) return false;
   const probe = text.slice(0, 1000);
-  let controlCount = 0;
-  let idx = 0;
-  while (idx < probe.length) {
-    const ch = probe.charCodeAt(idx);
-    if ((ch < 9) || (ch > 13 && ch < 32) || ch === 127) controlCount++;
-    idx++;
+  let ctrl = 0;
+  for (let i = 0; i < probe.length; i++) {
+    const ch = probe.charCodeAt(i);
+    if ((ch < 9) || (ch > 13 && ch < 32) || ch === 127) ctrl++;
   }
-  return controlCount / probe.length > 0.1;
-};
+  return ctrl / probe.length > 0.1;
+}
 
-/** Extract source text for a node, with truncation. */
-const resolveContent = (
+/* Pull source text for a node, applying per-label caps */
+function extractSourceText(
   entry: GraphNode,
   sourceMap: Map<string, string>,
-): string => {
+): string {
   const fPath = entry.properties.filePath;
   const src = sourceMap.get(fPath);
 
   if (!src) return '';
   if (entry.label === 'Folder') return '';
-  if (detectBinary(src)) return '[Binary file - content not stored]';
+  if (isBinaryContent(src)) return '[Binary file - content not stored]';
 
-  // File nodes: full content, capped
   if (entry.label === 'File') {
     const CAP = 10000;
     return src.length > CAP
@@ -68,183 +65,171 @@ const resolveContent = (
       : src;
   }
 
-  // Symbol nodes: line range with padding
   const first = entry.properties.startLine;
   const last = entry.properties.endLine;
   if (first === undefined || last === undefined) return '';
 
-  const allLines = src.split('\n');
+  const lines = src.split('\n');
   const PAD = 2;
   const lo = Math.max(0, first - PAD);
-  const hi = Math.min(allLines.length - 1, last + PAD);
-  const fragment = allLines.slice(lo, hi + 1).join('\n');
+  const hi = Math.min(lines.length - 1, last + PAD);
+  const fragment = lines.slice(lo, hi + 1).join('\n');
 
   const LIMIT = 5000;
   return fragment.length > LIMIT
     ? fragment.slice(0, LIMIT) + '\n... [truncated]'
     : fragment;
-};
+}
 
-// -- Public types ------------------------------------------------------------
+/* ── Public shape ────────────────────────────────────── */
 
 export interface CSVData {
   nodes: Map<NodeTableName, string>;
-  relCSV: string;  // Single relation CSV with from,to,type,confidence,reason columns
+  relCSV: string;
 }
 
-// -- Per-table CSV builders --------------------------------------------------
+/* ── Per-table builders ──────────────────────────────── */
 
-/** File nodes: id, name, filePath, content */
-const buildFileRows = (items: GraphNode[], sourceMap: Map<string, string>): string => {
-  const out: string[] = ['id,name,filePath,content'];
-  const seen = new Set<string>();
-  items.forEach((nd) => {
-    if (nd.label !== 'File') return;
-    if (seen.has(nd.id)) return;
-    seen.add(nd.id);
-    const body = resolveContent(nd, sourceMap);
-    out.push(
-      [quoteField(nd.id), quoteField(nd.properties.name || ''), quoteField(nd.properties.filePath || ''), quoteField(body)].join(','),
+function fileNodeCSV(items: GraphNode[], sourceMap: Map<string, string>): string {
+  const rows: string[] = ['id,name,filePath,content'];
+  const visited = new Set<string>();
+  for (const nd of items) {
+    if (nd.label !== 'File') continue;
+    if (visited.has(nd.id)) continue;
+    visited.add(nd.id);
+    const body = extractSourceText(nd, sourceMap);
+    rows.push(
+      [csvQuote(nd.id), csvQuote(nd.properties.name || ''), csvQuote(nd.properties.filePath || ''), csvQuote(body)].join(','),
     );
-  });
-  return out.join('\n');
-};
+  }
+  return rows.join('\n');
+}
 
-/** Folder nodes: id, name, filePath */
-const buildFolderRows = (items: GraphNode[]): string => {
-  const out: string[] = ['id,name,filePath'];
-  const seen = new Set<string>();
-  items.forEach((nd) => {
-    if (nd.label !== 'Folder') return;
-    if (seen.has(nd.id)) return;
-    seen.add(nd.id);
-    out.push(
-      [quoteField(nd.id), quoteField(nd.properties.name || ''), quoteField(nd.properties.filePath || '')].join(','),
+function folderNodeCSV(items: GraphNode[]): string {
+  const rows: string[] = ['id,name,filePath'];
+  const visited = new Set<string>();
+  for (const nd of items) {
+    if (nd.label !== 'Folder') continue;
+    if (visited.has(nd.id)) continue;
+    visited.add(nd.id);
+    rows.push(
+      [csvQuote(nd.id), csvQuote(nd.properties.name || ''), csvQuote(nd.properties.filePath || '')].join(','),
     );
-  });
-  return out.join('\n');
-};
+  }
+  return rows.join('\n');
+}
 
-/** Code-symbol nodes: id, name, filePath, startLine, endLine, isExported, content */
-const buildSymbolRows = (
+function symbolNodeCSV(
   items: GraphNode[],
   kind: NodeLabel,
   sourceMap: Map<string, string>,
-): string => {
-  const out: string[] = ['id,name,filePath,startLine,endLine,isExported,content'];
-  const seen = new Set<string>();
-  items.forEach((nd) => {
-    if (nd.label !== kind) return;
-    if (seen.has(nd.id)) return;
-    seen.add(nd.id);
-    const body = resolveContent(nd, sourceMap);
-    out.push([
-      quoteField(nd.id),
-      quoteField(nd.properties.name || ''),
-      quoteField(nd.properties.filePath || ''),
-      numericField(nd.properties.startLine, -1),
-      numericField(nd.properties.endLine, -1),
+): string {
+  const rows: string[] = ['id,name,filePath,startLine,endLine,isExported,content'];
+  const visited = new Set<string>();
+  for (const nd of items) {
+    if (nd.label !== kind) continue;
+    if (visited.has(nd.id)) continue;
+    visited.add(nd.id);
+    const body = extractSourceText(nd, sourceMap);
+    rows.push([
+      csvQuote(nd.id),
+      csvQuote(nd.properties.name || ''),
+      csvQuote(nd.properties.filePath || ''),
+      numVal(nd.properties.startLine, -1),
+      numVal(nd.properties.endLine, -1),
       nd.properties.isExported ? 'true' : 'false',
-      quoteField(body),
+      csvQuote(body),
     ].join(','));
-  });
-  return out.join('\n');
-};
+  }
+  return rows.join('\n');
+}
 
-/** Community nodes: id, label, heuristicLabel, keywords, description, enrichedBy, cohesion, symbolCount */
-const buildCommunityRows = (items: GraphNode[]): string => {
-  const out: string[] = ['id,label,heuristicLabel,keywords,description,enrichedBy,cohesion,symbolCount'];
-  const seen = new Set<string>();
-  items.forEach((nd) => {
-    if (nd.label !== 'Community') return;
-    if (seen.has(nd.id)) return;
-    seen.add(nd.id);
+function communityNodeCSV(items: GraphNode[]): string {
+  const rows: string[] = ['id,label,heuristicLabel,keywords,description,enrichedBy,cohesion,symbolCount'];
+  const visited = new Set<string>();
+  for (const nd of items) {
+    if (nd.label !== 'Community') continue;
+    if (visited.has(nd.id)) continue;
+    visited.add(nd.id);
     const props = nd.properties as any;
     const kws: string[] = props.keywords || [];
-    // KuzuDB STRING[] literal: ['a','b']
     const kwLiteral = '[' + kws.map((k: string) => "'" + k.replace(/'/g, "''") + "'").join(',') + ']';
-    out.push([
-      quoteField(nd.id),
-      quoteField(nd.properties.name || ''),
-      quoteField(nd.properties.heuristicLabel || ''),
+    rows.push([
+      csvQuote(nd.id),
+      csvQuote(nd.properties.name || ''),
+      csvQuote(nd.properties.heuristicLabel || ''),
       kwLiteral,
-      quoteField(props.description || ''),
-      quoteField(props.enrichedBy || 'heuristic'),
-      numericField(nd.properties.cohesion, 0),
-      numericField(nd.properties.symbolCount, 0),
+      csvQuote(props.description || ''),
+      csvQuote(props.enrichedBy || 'heuristic'),
+      numVal(nd.properties.cohesion, 0),
+      numVal(nd.properties.symbolCount, 0),
     ].join(','));
-  });
-  return out.join('\n');
-};
+  }
+  return rows.join('\n');
+}
 
-/** Process nodes: id, label, heuristicLabel, processType, stepCount, communities, entryPointId, terminalId */
-const buildProcessRows = (items: GraphNode[]): string => {
-  const out: string[] = ['id,label,heuristicLabel,processType,stepCount,communities,entryPointId,terminalId'];
-  const seen = new Set<string>();
-  items.forEach((nd) => {
-    if (nd.label !== 'Process') return;
-    if (seen.has(nd.id)) return;
-    seen.add(nd.id);
+function processNodeCSV(items: GraphNode[]): string {
+  const rows: string[] = ['id,label,heuristicLabel,processType,stepCount,communities,entryPointId,terminalId'];
+  const visited = new Set<string>();
+  for (const nd of items) {
+    if (nd.label !== 'Process') continue;
+    if (visited.has(nd.id)) continue;
+    visited.add(nd.id);
     const props = nd.properties as any;
     const comms: string[] = props.communities || [];
     const commLiteral = '[' + comms.map((c: string) => "'" + c.replace(/'/g, "''") + "'").join(',') + ']';
-    out.push([
-      quoteField(nd.id),
-      quoteField(nd.properties.name || ''),
-      quoteField(props.heuristicLabel || ''),
-      quoteField(props.processType || ''),
-      numericField(props.stepCount, 0),
-      quoteField(commLiteral),
-      quoteField(props.entryPointId || ''),
-      quoteField(props.terminalId || ''),
+    rows.push([
+      csvQuote(nd.id),
+      csvQuote(nd.properties.name || ''),
+      csvQuote(props.heuristicLabel || ''),
+      csvQuote(props.processType || ''),
+      numVal(props.stepCount, 0),
+      csvQuote(commLiteral),
+      csvQuote(props.entryPointId || ''),
+      csvQuote(props.terminalId || ''),
     ].join(','));
-  });
-  return out.join('\n');
-};
+  }
+  return rows.join('\n');
+}
 
-/** Relations: from, to, type, confidence, reason, step */
-const buildRelationRows = (graph: CodeGraph): string => {
-  const out: string[] = ['from,to,type,confidence,reason,step'];
-  graph.relationships.forEach((rel) => {
-    out.push([
-      quoteField(rel.sourceId),
-      quoteField(rel.targetId),
-      quoteField(rel.type),
-      numericField(rel.confidence, 1.0),
-      quoteField(rel.reason),
-      numericField((rel as any).step, 0),
+function edgeCSV(graph: CodeGraph): string {
+  const rows: string[] = ['from,to,type,confidence,reason,step'];
+  for (const rel of graph.relationships) {
+    rows.push([
+      csvQuote(rel.sourceId),
+      csvQuote(rel.targetId),
+      csvQuote(rel.type),
+      numVal(rel.confidence, 1.0),
+      csvQuote(rel.reason),
+      numVal((rel as any).step, 0),
     ].join(','));
-  });
-  return out.join('\n');
-};
+  }
+  return rows.join('\n');
+}
 
-// -- Orchestrator ------------------------------------------------------------
+/* ── Orchestrator ────────────────────────────────────── */
 
-/** Generate CSV payloads for all node tables and the edge table. */
-export const generateAllCSVs = (
+/* Produce CSV payloads for every node table and the edge table */
+export function generateAllCSVs(
   graph: CodeGraph,
   fileContents: Map<string, string>,
-): CSVData => {
+): CSVData {
   const allNodes = Array.from(graph.nodes);
 
   const nodeCSVs = new Map<NodeTableName, string>();
 
-  // FS tables
-  nodeCSVs.set('File', buildFileRows(allNodes, fileContents));
-  nodeCSVs.set('Folder', buildFolderRows(allNodes));
+  nodeCSVs.set('File', fileNodeCSV(allNodes, fileContents));
+  nodeCSVs.set('Folder', folderNodeCSV(allNodes));
 
-  // Code-symbol tables
   const symbolKinds: NodeLabel[] = ['Function', 'Class', 'Interface', 'Method', 'CodeElement'];
-  symbolKinds.forEach((kind) => {
-    nodeCSVs.set(kind as NodeTableName, buildSymbolRows(allNodes, kind, fileContents));
-  });
+  for (const kind of symbolKinds) {
+    nodeCSVs.set(kind as NodeTableName, symbolNodeCSV(allNodes, kind, fileContents));
+  }
 
-  // Module and flow tables
-  nodeCSVs.set('Community', buildCommunityRows(allNodes));
-  nodeCSVs.set('Process', buildProcessRows(allNodes));
+  nodeCSVs.set('Community', communityNodeCSV(allNodes));
+  nodeCSVs.set('Process', processNodeCSV(allNodes));
 
-  // Edges
-  const relCSV = buildRelationRows(graph);
+  const rels = edgeCSV(graph);
 
-  return { nodes: nodeCSVs, relCSV };
-};
+  return { nodes: nodeCSVs, relCSV: rels };
+}

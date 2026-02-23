@@ -1,9 +1,6 @@
-/**
- * Processes Panel — Prowl
- *
- * Lists detected execution flows grouped by entry file.
- * Clicking a process opens the ProcessFlowModal.
- */
+/* Execution Flow Panel
+   Renders detected call-chains grouped by entry file.
+   Selecting a flow opens the ProcessFlowModal for detailed inspection. */
 
 import { useState, useMemo, useCallback, useEffect } from 'react';
 import { GitBranch, Search, Eye, ChevronDown, ChevronRight, Loader2, ArrowRight } from 'lucide-react';
@@ -60,7 +57,7 @@ export const ProcessesPanel = () => {
 
     items.sort((a, b) => b.stepCount - a.stepCount);
 
-    // Group by entry file
+    /* Bucket processes by their originating file */
     const grouped = new Map<string, ProcessItem[]>();
     for (const item of items) {
       const group = grouped.get(item.entryFile) || [];

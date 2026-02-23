@@ -1,40 +1,37 @@
 import { SupportedLanguages } from '../../config/supported-languages';
 
-/* File extension to language mapping */
-const EXTENSION_MAP: Record<string, SupportedLanguages> = {
-  '.ts':   SupportedLanguages.TypeScript,
-  '.tsx':  SupportedLanguages.TypeScript,
-  '.js':   SupportedLanguages.JavaScript,
-  '.jsx':  SupportedLanguages.JavaScript,
-  '.py':   SupportedLanguages.Python,
-  '.java': SupportedLanguages.Java,
-  '.c':    SupportedLanguages.C,
-  '.h':    SupportedLanguages.C,
-  '.cpp':  SupportedLanguages.CPlusPlus,
-  '.cc':   SupportedLanguages.CPlusPlus,
-  '.cxx':  SupportedLanguages.CPlusPlus,
-  '.hpp':  SupportedLanguages.CPlusPlus,
-  '.hxx':  SupportedLanguages.CPlusPlus,
-  '.hh':   SupportedLanguages.CPlusPlus,
-  '.cs':   SupportedLanguages.CSharp,
-  '.go':   SupportedLanguages.Go,
-  '.rs':   SupportedLanguages.Rust,
-};
+/**
+ * Maps known file suffixes to the language enum.
+ * Entries are ordered longest-suffix-first so `.tsx` is
+ * matched before `.ts` without a secondary check.
+ */
+const SUFFIX_TABLE: ReadonlyArray<[string, SupportedLanguages]> = [
+  ['.tsx',  SupportedLanguages.TypeScript],
+  ['.ts',   SupportedLanguages.TypeScript],
+  ['.jsx',  SupportedLanguages.JavaScript],
+  ['.js',   SupportedLanguages.JavaScript],
+  ['.py',   SupportedLanguages.Python],
+  ['.java', SupportedLanguages.Java],
+  ['.hpp',  SupportedLanguages.CPlusPlus],
+  ['.hxx',  SupportedLanguages.CPlusPlus],
+  ['.hh',   SupportedLanguages.CPlusPlus],
+  ['.cpp',  SupportedLanguages.CPlusPlus],
+  ['.cc',   SupportedLanguages.CPlusPlus],
+  ['.cxx',  SupportedLanguages.CPlusPlus],
+  ['.h',    SupportedLanguages.C],
+  ['.c',    SupportedLanguages.C],
+  ['.cs',   SupportedLanguages.CSharp],
+  ['.go',   SupportedLanguages.Go],
+  ['.rs',   SupportedLanguages.Rust],
+];
 
-/* Detect language from file extension */
-export const getLanguageFromFilename = (filename: string): SupportedLanguages | null => {
-  const dotIdx = filename.lastIndexOf('.');
-  if (dotIdx === -1) return null;
-
-  /* Prefer longer extensions (e.g. ".tsx" over ".ts") */
-  const secondDotIdx = filename.lastIndexOf('.', dotIdx - 1);
-  if (secondDotIdx !== -1) {
-    const longExt = filename.slice(secondDotIdx);
-    const longMatch = EXTENSION_MAP[longExt];
-    if (longMatch !== undefined) return longMatch;
+/**
+ * Derive the language of a source file from its name.
+ * Returns `null` for unrecognised extensions.
+ */
+export function getLanguageFromFilename(name: string): SupportedLanguages | null {
+  for (const [suffix, lang] of SUFFIX_TABLE) {
+    if (name.endsWith(suffix)) return lang;
   }
-
-  const ext = filename.slice(dotIdx);
-  const match = EXTENSION_MAP[ext];
-  return match !== undefined ? match : null;
-};
+  return null;
+}

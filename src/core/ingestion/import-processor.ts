@@ -1,17 +1,16 @@
-import { CodeGraph } from '../graph/types';
-import { ASTCache } from './ast-cache';
+import type { CodeGraph } from '../graph/types';
+import type { ASTCache } from './ast-cache';
 import { loadParser, loadLanguage } from '../tree-sitter/parser-loader';
 import { LANGUAGE_QUERIES } from './tree-sitter-queries';
 import { generateId } from '../../lib/utils';
 import { getLanguageFromFilename } from './utils';
 
-// Per-file set of resolved dependency paths
+/* Per-file set of resolved dependency paths */
 export type ImportMap = Map<string, Set<string>>;
-
 export const createImportMap = (): ImportMap => new Map();
 
-// Extension candidates tried when resolving an import specifier
-const PROBE_SUFFIXES = [
+/* Suffixes tried when mapping a specifier to a project file */
+const CANDIDATE_EXTENSIONS = [
   '',
   '.tsx', '.ts', '.jsx', '.js',
   '/index.tsx', '/index.ts', '/index.jsx', '/index.js',
@@ -23,145 +22,142 @@ const PROBE_SUFFIXES = [
   '.rs', '/mod.rs',
 ];
 
-/** Resolve an import specifier to a project file path, or null if external. */
-const toConcreteFile = (
+/**
+ * Turn an import specifier into the project-relative path it
+ * points to, or null when the target lives outside the project.
+ */
+function resolveToProjectPath(
   originFile: string,
   specifier: string,
-  knownFiles: Set<string>,
-  fileList: string[],
-  memo: Map<string, string | null>
-): string | null => {
-  const memoKey = originFile + '::' + specifier;
-  if (memo.has(memoKey)) return memo.get(memoKey)!;
+  knownPaths: Set<string>,
+  allPaths: string[],
+  memo: Map<string, string | null>,
+): string | null {
+  const cacheKey = `${originFile}\0${specifier}`;
+  if (memo.has(cacheKey)) return memo.get(cacheKey)!;
 
-  // Resolve relative path segments
-  const dirParts = originFile.split('/').slice(0, -1);
-  specifier.split('/').forEach(seg => {
-    if (seg === '.') return;
-    if (seg === '..') { dirParts.pop(); return; }
-    dirParts.push(seg);
-  });
-  const resolvedBase = dirParts.join('/');
+  /* Build the base path by applying relative segments */
+  const segments = originFile.split('/').slice(0, -1);
+  for (const seg of specifier.split('/')) {
+    if (seg === '.') continue;
+    if (seg === '..') { segments.pop(); continue; }
+    segments.push(seg);
+  }
+  const basePath = segments.join('/');
 
-  // Relative imports
-  if (specifier.charAt(0) === '.') {
-    for (const suffix of PROBE_SUFFIXES) {
-      const attempt = resolvedBase + suffix;
-      if (knownFiles.has(attempt)) {
-        memo.set(memoKey, attempt);
-        return attempt;
+  /* Relative specifiers ("./" or "../") */
+  if (specifier.startsWith('.')) {
+    for (const ext of CANDIDATE_EXTENSIONS) {
+      const probe = basePath + ext;
+      if (knownPaths.has(probe)) {
+        memo.set(cacheKey, probe);
+        return probe;
       }
     }
-    memo.set(memoKey, null);
+    memo.set(cacheKey, null);
     return null;
   }
 
-  // Wildcard imports cannot resolve to a single file
+  /* Wildcards are ambiguous */
   if (specifier.endsWith('.*')) {
-    memo.set(memoKey, null);
+    memo.set(cacheKey, null);
     return null;
   }
 
-  // Package-style imports: convert dots to slashes and probe
-  const normalized = specifier.includes('/') ? specifier : specifier.replace(/\./g, '/');
-  const chunks = normalized.split('/').filter(Boolean);
-  const fwdSlashPaths = fileList.map(fp => fp.replace(/\\/g, '/'));
+  /* Package-style: convert dots to slashes, try tail matching */
+  const normalised = specifier.includes('/') ? specifier : specifier.replace(/\./g, '/');
+  const parts = normalised.split('/').filter(Boolean);
+  const forwardPaths = allPaths.map(fp => fp.replace(/\\/g, '/'));
 
-  let chunkOffset = 0;
-  while (chunkOffset < chunks.length) {
-    const tail = chunks.slice(chunkOffset).join('/');
-    for (const suffix of PROBE_SUFFIXES) {
-      const needle = '/' + tail + suffix;
-      const matchPos = fwdSlashPaths.findIndex(
-        fp => fp.endsWith(needle) || fp.toLowerCase().endsWith(needle.toLowerCase())
+  for (let offset = 0; offset < parts.length; offset++) {
+    const tail = parts.slice(offset).join('/');
+    for (const ext of CANDIDATE_EXTENSIONS) {
+      const needle = '/' + tail + ext;
+      const idx = forwardPaths.findIndex(
+        fp => fp.endsWith(needle) || fp.toLowerCase().endsWith(needle.toLowerCase()),
       );
-      if (matchPos !== -1) {
-        const found = fileList[matchPos];
-        memo.set(memoKey, found);
+      if (idx !== -1) {
+        const found = allPaths[idx];
+        memo.set(cacheKey, found);
         return found;
       }
     }
-    chunkOffset++;
   }
 
-  memo.set(memoKey, null);
+  memo.set(cacheKey, null);
   return null;
-};
+}
 
-export const processImports = async (
+export async function processImports(
   graph: CodeGraph,
   files: { path: string; content: string }[],
   astCache: ASTCache,
   importMap: ImportMap,
-  onProgress?: (current: number, total: number) => void
-) => {
-  const allPaths = new Set(files.map(f => f.path));
+  onProgress?: (current: number, total: number) => void,
+): Promise<void> {
+  const knownPaths = new Set(files.map(f => f.path));
   const pathList = files.map(f => f.path);
   const parser = await loadParser();
-  const resolutionMemo = new Map<string, string | null>();
+  const memo = new Map<string, string | null>();
 
-  let discoveredCount = 0;
-  let linkedCount = 0;
+  let resolved = 0;
+  let total = 0;
 
-  let cursor = 0;
-  while (cursor < files.length) {
-    const entry = files[cursor];
-    onProgress?.(cursor + 1, files.length);
+  for (let i = 0; i < files.length; i++) {
+    const src = files[i];
+    onProgress?.(i + 1, files.length);
 
-    const lang = getLanguageFromFilename(entry.path);
-    if (!lang) { cursor++; continue; }
+    const lang = getLanguageFromFilename(src.path);
+    if (!lang) continue;
 
-    const queryText = LANGUAGE_QUERIES[lang];
-    if (!queryText) { cursor++; continue; }
+    const qText = LANGUAGE_QUERIES[lang];
+    if (!qText) continue;
 
-    await loadLanguage(lang, entry.path);
+    await loadLanguage(lang, src.path);
 
-    let syntaxTree = astCache.get(entry.path);
-    let ephemeral = false;
-    if (!syntaxTree) {
-      syntaxTree = parser.parse(entry.content);
-      ephemeral = true;
+    let tree = astCache.get(src.path);
+    let owned = false;
+    if (!tree) {
+      tree = parser.parse(src.content);
+      owned = true;
     }
 
-    let queryHandle;
-    let matchList;
+    let matches: any[];
     try {
-      queryHandle = parser.getLanguage().query(queryText);
-      matchList = queryHandle.matches(syntaxTree.rootNode);
-    } catch (_err: any) {
-      if (ephemeral) syntaxTree.delete();
-      cursor++;
+      const q = parser.getLanguage().query(qText);
+      matches = q.matches(tree.rootNode);
+    } catch {
+      if (owned) tree.delete();
       continue;
     }
 
-    matchList.forEach(m => {
-      const captured: Record<string, any> = {};
-      m.captures.forEach(c => { captured[c.name] = c.node; });
+    for (const m of matches) {
+      const cap: Record<string, any> = {};
+      for (const c of m.captures) cap[c.name] = c.node;
 
-      if (!captured['import']) return;
+      if (!cap['import']) continue;
 
-      const srcNode = captured['import.source'];
+      const srcNode = cap['import.source'];
       if (!srcNode) {
         if (import.meta.env.DEV) {
-          console.log(`[prowl:imports] captured import with no source node in ${entry.path}`);
+          console.log(`[prowl:imports] import without source in ${src.path}`);
         }
-        return;
+        continue;
       }
 
       const rawSpec = srcNode.text.replace(/['"]/g, '');
-      discoveredCount++;
+      total++;
 
-      const concrete = toConcreteFile(entry.path, rawSpec, allPaths, pathList, resolutionMemo);
-      if (!concrete) return;
+      const target = resolveToProjectPath(src.path, rawSpec, knownPaths, pathList, memo);
+      if (!target) continue;
 
-      linkedCount++;
+      resolved++;
 
-      const fromId = generateId('File', entry.path);
-      const toId = generateId('File', concrete);
-      const edgeId = generateId('IMPORTS', `${entry.path}->${concrete}`);
+      const fromId = generateId('File', src.path);
+      const toId = generateId('File', target);
 
       graph.addRelationship({
-        id: edgeId,
+        id: generateId('IMPORTS', `${src.path}->${target}`),
         sourceId: fromId,
         targetId: toId,
         type: 'IMPORTS',
@@ -169,19 +165,14 @@ export const processImports = async (
         reason: '',
       });
 
-      if (!importMap.has(entry.path)) {
-        importMap.set(entry.path, new Set());
-      }
-      importMap.get(entry.path)!.add(concrete);
-    });
-
-    if (ephemeral) {
-      syntaxTree.delete();
+      if (!importMap.has(src.path)) importMap.set(src.path, new Set());
+      importMap.get(src.path)!.add(target);
     }
-    cursor++;
+
+    if (owned) tree.delete();
   }
 
   if (import.meta.env.DEV) {
-    console.log(`[prowl:imports] ${linkedCount}/${discoveredCount} imports resolved to graph edges`);
+    console.log(`[prowl:imports] linked ${resolved}/${total} specifiers`);
   }
-};
+}

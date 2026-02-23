@@ -1,15 +1,15 @@
-import { CodeGraph, GraphNode, GraphRelationship } from '../graph/types';
+import type { CodeGraph, GraphNode, GraphRelationship } from '../graph/types';
 import { loadParser, loadLanguage } from '../tree-sitter/parser-loader';
 import { LANGUAGE_QUERIES } from './tree-sitter-queries';
 import { generateId } from '../../lib/utils';
-import { SymbolTable } from './symbol-table';
-import { ASTCache } from './ast-cache';
+import type { SymbolTable } from './symbol-table';
+import type { ASTCache } from './ast-cache';
 import { getLanguageFromFilename } from './utils';
 
 export type FileProgressCallback = (current: number, total: number, filePath: string) => void;
 
-// Capture group suffix to graph node label mapping
-const CAPTURE_LABEL_TABLE: Record<string, string> = {
+/* Mapping from capture-group suffix to the graph label it produces */
+const CAPTURE_TO_LABEL: Record<string, string> = {
   'definition.function': 'Function',
   'definition.class': 'Class',
   'definition.interface': 'Interface',
@@ -34,176 +34,140 @@ const CAPTURE_LABEL_TABLE: Record<string, string> = {
   'definition.template': 'Template',
 };
 
-// Capture keys checked in order per match
-const LABEL_KEYS = Object.keys(CAPTURE_LABEL_TABLE);
+const ORDERED_KEYS = Object.keys(CAPTURE_TO_LABEL);
 
-/** Check public visibility using language-specific heuristics. */
-const checkVisibility = (astNode: any, symbolName: string, lang: string): boolean => {
-  // Python: leading underscore = private
-  if (lang === 'python') {
-    return !symbolName.startsWith('_');
+/** Pick the first matching capture group and return its label. */
+function labelFromCaptures(caps: Record<string, any>): string {
+  for (const k of ORDERED_KEYS) {
+    if (caps[k] !== undefined) return CAPTURE_TO_LABEL[k];
   }
+  return 'CodeElement';
+}
 
-  // Go: uppercase first letter = exported
+/**
+ * Language-specific heuristic for whether a symbol is public.
+ * Python: underscore prefix = private.
+ * Go: uppercase first char = exported.
+ * C/C++: no explicit export keyword.
+ * JS/TS/Java/C#/Rust: walk ancestors for visibility modifiers.
+ */
+function determineExportStatus(node: any, name: string, lang: string): boolean {
+  if (lang === 'python') return !name.startsWith('_');
+
   if (lang === 'go') {
-    if (symbolName.length < 1) return false;
-    const ch = symbolName.charAt(0);
-    return ch === ch.toUpperCase() && ch !== ch.toLowerCase();
+    if (name.length === 0) return false;
+    const first = name.charAt(0);
+    return first === first.toUpperCase() && first !== first.toLowerCase();
   }
 
-  // C/C++: no export keyword
-  if (lang === 'c' || lang === 'cpp') {
-    return false;
-  }
+  if (lang === 'c' || lang === 'cpp') return false;
 
-  // Walk AST ancestors looking for visibility modifiers
-  let cursor = astNode;
-  while (cursor !== null) {
-    const nodeType = cursor.type;
+  let cur = node;
+  while (cur) {
+    const t = cur.type;
 
     if (lang === 'javascript' || lang === 'typescript') {
       if (
-        nodeType === 'export_statement' ||
-        nodeType === 'export_specifier' ||
-        (nodeType === 'lexical_declaration' && cursor.parent?.type === 'export_statement')
-      ) {
-        return true;
-      }
-      if (cursor.text?.startsWith('export ')) {
-        return true;
-      }
+        t === 'export_statement' ||
+        t === 'export_specifier' ||
+        (t === 'lexical_declaration' && cur.parent?.type === 'export_statement')
+      ) return true;
+      if (cur.text?.startsWith('export ')) return true;
     } else if (lang === 'java') {
-      if (cursor.parent) {
-        const parentNode = cursor.parent;
-        let idx = 0;
-        while (idx < parentNode.childCount) {
-          const sibling = parentNode.child(idx);
-          if (sibling?.type === 'modifiers' && sibling.text?.includes('public')) {
-            return true;
-          }
-          idx++;
+      if (cur.parent) {
+        const p = cur.parent;
+        for (let ci = 0; ci < p.childCount; ci++) {
+          const sib = p.child(ci);
+          if (sib?.type === 'modifiers' && sib.text?.includes('public')) return true;
         }
         if (
-          (parentNode.type === 'method_declaration' || parentNode.type === 'constructor_declaration') &&
-          parentNode.text?.trimStart().startsWith('public')
-        ) {
-          return true;
-        }
+          (p.type === 'method_declaration' || p.type === 'constructor_declaration') &&
+          p.text?.trimStart().startsWith('public')
+        ) return true;
       }
     } else if (lang === 'csharp') {
-      if (nodeType === 'modifier' || nodeType === 'modifiers') {
-        if (cursor.text?.includes('public')) return true;
-      }
+      if ((t === 'modifier' || t === 'modifiers') && cur.text?.includes('public')) return true;
     } else if (lang === 'rust') {
-      if (nodeType === 'visibility_modifier' && cursor.text?.includes('pub')) {
-        return true;
-      }
+      if (t === 'visibility_modifier' && cur.text?.includes('pub')) return true;
     }
 
-    cursor = cursor.parent;
+    cur = cur.parent;
   }
-
   return false;
-};
+}
 
-/** Map capture groups to a graph node label. */
-const deriveLabelFromCaptures = (captures: Record<string, any>): string => {
-  for (const key of LABEL_KEYS) {
-    if (captures[key] !== undefined) {
-      return CAPTURE_LABEL_TABLE[key];
-    }
-  }
-  return 'CodeElement';
-};
-
-export const processParsing = async (
+export async function processParsing(
   graph: CodeGraph,
   files: { path: string; content: string }[],
   symbolTable: SymbolTable,
   astCache: ASTCache,
-  onFileProgress?: FileProgressCallback
-) => {
+  onFileProgress?: FileProgressCallback,
+): Promise<void> {
   const parser = await loadParser();
-  const fileCount = files.length;
 
-  let idx = 0;
-  while (idx < fileCount) {
-    const entry = files[idx];
-    onFileProgress?.(idx + 1, fileCount, entry.path);
+  for (let i = 0; i < files.length; i++) {
+    const src = files[i];
+    onFileProgress?.(i + 1, files.length, src.path);
 
-    const lang = getLanguageFromFilename(entry.path);
-    if (lang === null) {
-      idx++;
-      continue;
-    }
+    const lang = getLanguageFromFilename(src.path);
+    if (lang === null) continue;
 
-    await loadLanguage(lang, entry.path);
+    await loadLanguage(lang, src.path);
 
-    const syntaxTree = parser.parse(entry.content);
-    astCache.set(entry.path, syntaxTree);
+    const tree = parser.parse(src.content);
+    astCache.set(src.path, tree);
 
-    const qs = LANGUAGE_QUERIES[lang];
-    if (!qs) {
-      idx++;
-      continue;
-    }
+    const qText = LANGUAGE_QUERIES[lang];
+    if (!qText) continue;
 
-    let queryObj;
-    let matchResults;
+    let matches: any[];
     try {
-      queryObj = parser.getLanguage().query(qs);
-      matchResults = queryObj.matches(syntaxTree.rootNode);
+      const q = parser.getLanguage().query(qText);
+      matches = q.matches(tree.rootNode);
     } catch (err) {
-      console.warn(`Query error for ${entry.path}:`, err);
-      idx++;
+      console.warn(`[prowl:parse] query failed for ${src.path}`, err);
       continue;
     }
 
-    for (const m of matchResults) {
-      const capturedNodes: Record<string, any> = {};
-      m.captures.forEach(cap => {
-        capturedNodes[cap.name] = cap.node;
-      });
+    for (const m of matches) {
+      const caps: Record<string, any> = {};
+      for (const c of m.captures) caps[c.name] = c.node;
 
-      // Imports and calls handled by separate processors
-      if (capturedNodes['import'] || capturedNodes['call']) continue;
+      /* imports / calls belong to their own processors */
+      if (caps['import'] || caps['call']) continue;
 
-      const identNode = capturedNodes['name'];
-      if (!identNode) continue;
+      const nameNode = caps['name'];
+      if (!nameNode) continue;
 
-      const symbolName = identNode.text;
-      const label = deriveLabelFromCaptures(capturedNodes);
-      const symbolId = generateId(label, `${entry.path}:${symbolName}`);
+      const symName = nameNode.text;
+      const tag = labelFromCaptures(caps);
+      const symId = generateId(tag, `${src.path}:${symName}`);
 
-      const graphNode: GraphNode = {
-        id: symbolId,
-        label: label as any,
+      const gNode: GraphNode = {
+        id: symId,
+        label: tag as any,
         properties: {
-          name: symbolName,
-          filePath: entry.path,
-          startLine: identNode.startPosition.row,
-          endLine: identNode.endPosition.row,
+          name: symName,
+          filePath: src.path,
+          startLine: nameNode.startPosition.row,
+          endLine: nameNode.endPosition.row,
           language: lang,
-          isExported: checkVisibility(identNode, symbolName, lang),
+          isExported: determineExportStatus(nameNode, symName, lang),
         },
       };
-      graph.addNode(graphNode);
+      graph.addNode(gNode);
+      symbolTable.add(src.path, symName, symId, tag);
 
-      symbolTable.add(entry.path, symbolName, symbolId, label);
-
-      const parentFileId = generateId('File', entry.path);
-      const edgeId = generateId('DEFINES', `${parentFileId}->${symbolId}`);
+      const fileId = generateId('File', src.path);
       const edge: GraphRelationship = {
-        id: edgeId,
-        sourceId: parentFileId,
-        targetId: symbolId,
+        id: generateId('DEFINES', `${fileId}->${symId}`),
+        sourceId: fileId,
+        targetId: symId,
         type: 'DEFINES',
         confidence: 1.0,
         reason: '',
       };
       graph.addRelationship(edge);
     }
-
-    idx++;
   }
-};
+}

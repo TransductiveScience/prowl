@@ -1,71 +1,77 @@
 import { shouldIgnorePath } from '../config/ignore-service';
 
-// Dynamic import to handle JSZip's UMD/CommonJS export pattern
-const loadJSZip = async () => {
+/* ── Lazy JSZip loader (handles UMD/CJS export) ────── */
+
+const getJSZipLib = async () => {
   const module = await import('jszip');
   return module.default || module;
 };
+
+/* ── Shared type for extracted files ────────────────── */
 
 export interface FileEntry {
     path: string;
     content: string;
 }
 
-// Strip the single-level root folder that GitHub attaches to ZIP downloads
-const findRootPrefix = (paths: string[]): string => {
+/* ── Detect the single-level root folder GitHub adds ── */
+
+function detectArchiveRoot(paths: string[]): string {
     if (paths.length === 0) return '';
 
-    const frequencyMap: Record<string, number> = {};
-    let totalWithSegment = 0;
+    const tally: Record<string, number> = {};
+    let segmented = 0;
 
     for (const p of paths) {
-        const slashIndex = p.indexOf('/');
-        if (slashIndex === -1) continue;
-        const segment = p.substring(0, slashIndex);
-        frequencyMap[segment] = (frequencyMap[segment] || 0) + 1;
-        totalWithSegment++;
+        const slashIdx = p.indexOf('/');
+        if (slashIdx === -1) continue;
+        const segment = p.substring(0, slashIdx);
+        tally[segment] = (tally[segment] || 0) + 1;
+        segmented++;
     }
 
-    if (totalWithSegment === 0) return '';
+    if (segmented === 0) return '';
 
-    let topSegment = '';
-    let topCount = 0;
-    for (const segment in frequencyMap) {
-        if (frequencyMap[segment] > topCount) {
-            topCount = frequencyMap[segment];
-            topSegment = segment;
+    let dominant = '';
+    let maxHits = 0;
+    for (const segment in tally) {
+        if (tally[segment] > maxHits) {
+            maxHits = tally[segment];
+            dominant = segment;
         }
     }
 
-    if (topCount / totalWithSegment > 0.9) {
-        return topSegment + '/';
+    if (maxHits / segmented > 0.9) {
+        return dominant + '/';
     }
 
     return '';
-};
+}
 
-export const extractZip = async (file: File): Promise<FileEntry[]> => {
-    const JSZip = await loadJSZip();
+/* ── Public: extract a ZIP file into FileEntry[] ────── */
+
+export async function extractZip(file: File): Promise<FileEntry[]> {
+    const JSZip = await getJSZipLib();
     const zip = await JSZip.loadAsync(file);
-    const entries = Object.entries(zip.files);
+    const items = Object.entries(zip.files);
 
     const allPaths: string[] = [];
-    for (const [relativePath, entry] of entries) {
+    for (const [relativePath, entry] of items) {
         if (!entry.dir) {
             allPaths.push(relativePath);
         }
     }
 
-    const rootPrefix = findRootPrefix(allPaths);
+    const archiveRoot = detectArchiveRoot(allPaths);
 
     const results: FileEntry[] = new Array(allPaths.length);
-    let writeIndex = 0;
+    let cursor = 0;
 
-    for (const [relativePath, entry] of entries) {
+    for (const [relativePath, entry] of items) {
         if (entry.dir) continue;
 
-        const normalizedPath = rootPrefix && relativePath.startsWith(rootPrefix)
-            ? relativePath.slice(rootPrefix.length)
+        const normalizedPath = archiveRoot && relativePath.startsWith(archiveRoot)
+            ? relativePath.slice(archiveRoot.length)
             : relativePath;
 
         if (!normalizedPath) continue;
@@ -73,12 +79,12 @@ export const extractZip = async (file: File): Promise<FileEntry[]> => {
 
         const content = await entry.async('string');
 
-        results[writeIndex] = {
+        results[cursor] = {
             path: normalizedPath,
             content: content,
         };
-        writeIndex++;
+        cursor++;
     }
 
-    return results.slice(0, writeIndex);
-};
+    return results.slice(0, cursor);
+}

@@ -1,4 +1,4 @@
-/* Graph data model definitions */
+/* ── Node taxonomy ─────────────────────────────────────── */
 
 export type NodeLabel =
   | 'Project'
@@ -19,6 +19,8 @@ export type NodeLabel =
   | 'Community'
   | 'Process';
 
+/* ── Edge taxonomy ─────────────────────────────────────── */
+
 export type RelationshipType =
   | 'CONTAINS'
   | 'CALLS'
@@ -31,57 +33,66 @@ export type RelationshipType =
   | 'IMPLEMENTS'
   | 'EXTENDS'
   | 'MEMBER_OF'
-  | 'STEP_IN_PROCESS'
+  | 'STEP_IN_PROCESS';
 
-export type NodeProperties = {
-  name: string,
-  filePath: string,
-  startLine?: number,
-  endLine?: number,
-  language?: string,
-  isExported?: boolean,
-  /* Community fields */
-  heuristicLabel?: string,
-  cohesion?: number,
-  symbolCount?: number,
-  keywords?: string[],
-  description?: string,
-  enrichedBy?: 'heuristic' | 'llm',
-  /* Process fields */
-  processType?: 'intra_community' | 'cross_community',
-  stepCount?: number,
-  communities?: string[],
-  entryPointId?: string,
-  terminalId?: string,
-  /* Entry point scoring fields */
-  entryPointScore?: number,
-  entryPointReason?: string,
+/* ── Node shape ────────────────────────────────────────── */
+
+export interface NodeProperties {
+  name: string;
+  filePath: string;
+  startLine?: number;
+  endLine?: number;
+  language?: string;
+  isExported?: boolean;
+
+  /* cluster metadata */
+  heuristicLabel?: string;
+  cohesion?: number;
+  symbolCount?: number;
+  keywords?: string[];
+  description?: string;
+  enrichedBy?: 'heuristic' | 'llm';
+
+  /* detected execution flow */
+  processType?: 'intra_community' | 'cross_community';
+  stepCount?: number;
+  communities?: string[];
+  entryPointId?: string;
+  terminalId?: string;
+
+  /* importance ranking */
+  entryPointScore?: number;
+  entryPointReason?: string;
 }
 
 export interface GraphNode {
-  id:  string,
-  label: NodeLabel,
-  properties: NodeProperties,
+  id: string;
+  label: NodeLabel;
+  properties: NodeProperties;
 }
+
+/* ── Edge shape ────────────────────────────────────────── */
 
 export interface GraphRelationship {
-  id: string,
-  sourceId: string,
-  targetId: string,
-  type: RelationshipType,
-  /** Confidence score 0-1 (1.0 = certain, lower = uncertain resolution) */
-  confidence: number,
-  /** Resolution reason: 'import-resolved', 'same-file', 'fuzzy-global', or empty for non-CALLS */
-  reason: string,
-  /** Step number for STEP_IN_PROCESS relationships (1-indexed) */
-  step?: number,
+  id: string;
+  sourceId: string;
+  targetId: string;
+  type: RelationshipType;
+  /** 0–1 certainty (1 = definite, lower = heuristic match) */
+  confidence: number;
+  /** How the link was inferred: 'import-resolved' | 'same-file' | 'fuzzy-global' | '' */
+  reason: string;
+  /** Ordinal within a STEP_IN_PROCESS chain (starts at 1) */
+  step?: number;
 }
 
+/* ── Mutable graph container ───────────────────────────── */
+
 export interface CodeGraph {
-  nodes: GraphNode[],
-  relationships: GraphRelationship[],
-  nodeCount: number,
-  relationshipCount: number,
-  addNode: (node: GraphNode) => void,
-  addRelationship: (relationship: GraphRelationship) => void,
+  nodes: GraphNode[];
+  relationships: GraphRelationship[];
+  nodeCount: number;
+  relationshipCount: number;
+  addNode(node: GraphNode): void;
+  addRelationship(rel: GraphRelationship): void;
 }

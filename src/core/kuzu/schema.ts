@@ -1,46 +1,46 @@
 /**
- * KuzuDB schema for persisting code graphs:
- *   - Per-element node tables (File, Function, Class, ...)
- *   - Polymorphic CodeEdge edge table
- *   - CodeEmbedding node table for HNSW vector search
+ * DDL definitions for the KuzuDB graph store.
+ * Declares per-element node tables, the polymorphic edge table,
+ * and the HNSW vector-search table.
  */
 
-// -- Node tables -------------------------------------------------------------
+/* ── Node table roster ───────────────────────────────── */
 
 export const NODE_TABLES = [
   'File', 'Folder', 'Function', 'Class', 'Interface', 'Method', 'CodeElement', 'Community', 'Process',
-  // Multi-language support
   'Struct', 'Enum', 'Macro', 'Typedef', 'Union', 'Namespace', 'Trait', 'Impl',
   'TypeAlias', 'Const', 'Static', 'Property', 'Record', 'Delegate', 'Annotation', 'Constructor', 'Template', 'Module'
 ] as const;
 export type NodeTableName = typeof NODE_TABLES[number];
 
-// -- Edge metadata -----------------------------------------------------------
+/* ── Edge table constants ────────────────────────────── */
 
 export const EDGE_TABLE_NAME = 'CodeEdge';
 
 export const REL_TYPES = ['CONTAINS', 'DEFINES', 'IMPORTS', 'CALLS', 'EXTENDS', 'IMPLEMENTS', 'MEMBER_OF', 'STEP_IN_PROCESS'] as const;
 export type RelType = typeof REL_TYPES[number];
 
-// -- Vector table ------------------------------------------------------------
+/* ── Vector store table name ─────────────────────────── */
 
 export const VECTOR_TABLE = 'CodeEmbedding';
 
-// -- DDL helper for backtick-quoted code-element tables ----------------------
+/* ── DDL generator for generic code-element tables ───── */
 
-const buildCodeElementDDL = (tableName: string): string => [
-  `CREATE NODE TABLE \`${tableName}\` (`,
-  '  id STRING,',
-  '  name STRING,',
-  '  filePath STRING,',
-  '  startLine INT64,',
-  '  endLine INT64,',
-  '  content STRING,',
-  '  PRIMARY KEY (id)',
-  ')',
-].join('\n');
+function codeElementDDL(tableName: string): string {
+  return [
+    `CREATE NODE TABLE \`${tableName}\` (`,
+    '  id STRING,',
+    '  name STRING,',
+    '  filePath STRING,',
+    '  startLine INT64,',
+    '  endLine INT64,',
+    '  content STRING,',
+    '  PRIMARY KEY (id)',
+    ')',
+  ].join('\n');
+}
 
-// -- Core node DDL -----------------------------------------------------------
+/* ── Core node table DDL ─────────────────────────────── */
 
 export const FILE_SCHEMA = `
 CREATE NODE TABLE File (
@@ -119,7 +119,7 @@ CREATE NODE TABLE CodeElement (
   PRIMARY KEY (id)
 )`;
 
-// -- Community and Process DDL -----------------------------------------------
+/* ── Community and process node DDL ──────────────────── */
 
 export const COMMUNITY_SCHEMA = `
 CREATE NODE TABLE Community (
@@ -147,29 +147,28 @@ CREATE NODE TABLE Process (
   PRIMARY KEY (id)
 )`;
 
-// -- Extended language element DDL --------------------------------------------
+/* ── Extended language element DDL ────────────────────── */
 
-export const STRUCT_SCHEMA = buildCodeElementDDL('Struct');
-export const ENUM_SCHEMA = buildCodeElementDDL('Enum');
-export const MACRO_SCHEMA = buildCodeElementDDL('Macro');
-export const TYPEDEF_SCHEMA = buildCodeElementDDL('Typedef');
-export const UNION_SCHEMA = buildCodeElementDDL('Union');
-export const NAMESPACE_SCHEMA = buildCodeElementDDL('Namespace');
-export const TRAIT_SCHEMA = buildCodeElementDDL('Trait');
-export const IMPL_SCHEMA = buildCodeElementDDL('Impl');
-export const TYPE_ALIAS_SCHEMA = buildCodeElementDDL('TypeAlias');
-export const CONST_SCHEMA = buildCodeElementDDL('Const');
-export const STATIC_SCHEMA = buildCodeElementDDL('Static');
-export const PROPERTY_SCHEMA = buildCodeElementDDL('Property');
-export const RECORD_SCHEMA = buildCodeElementDDL('Record');
-export const DELEGATE_SCHEMA = buildCodeElementDDL('Delegate');
-export const ANNOTATION_SCHEMA = buildCodeElementDDL('Annotation');
-export const CONSTRUCTOR_SCHEMA = buildCodeElementDDL('Constructor');
-export const TEMPLATE_SCHEMA = buildCodeElementDDL('Template');
-export const MODULE_SCHEMA = buildCodeElementDDL('Module');
+export const STRUCT_SCHEMA = codeElementDDL('Struct');
+export const ENUM_SCHEMA = codeElementDDL('Enum');
+export const MACRO_SCHEMA = codeElementDDL('Macro');
+export const TYPEDEF_SCHEMA = codeElementDDL('Typedef');
+export const UNION_SCHEMA = codeElementDDL('Union');
+export const NAMESPACE_SCHEMA = codeElementDDL('Namespace');
+export const TRAIT_SCHEMA = codeElementDDL('Trait');
+export const IMPL_SCHEMA = codeElementDDL('Impl');
+export const TYPE_ALIAS_SCHEMA = codeElementDDL('TypeAlias');
+export const CONST_SCHEMA = codeElementDDL('Const');
+export const STATIC_SCHEMA = codeElementDDL('Static');
+export const PROPERTY_SCHEMA = codeElementDDL('Property');
+export const RECORD_SCHEMA = codeElementDDL('Record');
+export const DELEGATE_SCHEMA = codeElementDDL('Delegate');
+export const ANNOTATION_SCHEMA = codeElementDDL('Annotation');
+export const CONSTRUCTOR_SCHEMA = codeElementDDL('Constructor');
+export const TEMPLATE_SCHEMA = codeElementDDL('Template');
+export const MODULE_SCHEMA = codeElementDDL('Module');
 
-// -- Edge table DDL ----------------------------------------------------------
-// Lists all valid (source, target) node table pairs.
+/* ── Polymorphic edge table DDL ──────────────────────── */
 
 export const RELATION_SCHEMA = `
 CREATE REL TABLE ${EDGE_TABLE_NAME} (
@@ -329,7 +328,7 @@ CREATE REL TABLE ${EDGE_TABLE_NAME} (
   step INT32
 )`;
 
-// -- Vector table and HNSW index ---------------------------------------------
+/* ── Vector embedding table and HNSW index ───────────── */
 
 export const EMBEDDING_SCHEMA = `
 CREATE NODE TABLE ${VECTOR_TABLE} (
@@ -338,13 +337,11 @@ CREATE NODE TABLE ${VECTOR_TABLE} (
   PRIMARY KEY (nodeId)
 )`;
 
-/** HNSW cosine-similarity vector index DDL */
 export const CREATE_VECTOR_INDEX_QUERY = `
 CALL CREATE_VECTOR_INDEX('${VECTOR_TABLE}', 'code_embedding_idx', 'embedding', metric := 'cosine')
 `;
 
-// -- Ordered DDL execution lists ----------------------------------------------
-// Nodes first, then edges, then embeddings.
+/* ── Ordered execution lists (nodes → edges → vectors) ─ */
 
 export const NODE_SCHEMA_QUERIES = [
   FILE_SCHEMA,
@@ -356,7 +353,6 @@ export const NODE_SCHEMA_QUERIES = [
   CODE_ELEMENT_SCHEMA,
   COMMUNITY_SCHEMA,
   PROCESS_SCHEMA,
-  // Multi-language support
   STRUCT_SCHEMA,
   ENUM_SCHEMA,
   MACRO_SCHEMA,

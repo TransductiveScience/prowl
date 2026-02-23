@@ -1,8 +1,8 @@
 /**
- * In-browser KuzuDB WASM adapter.
+ * KuzuDB WASM adapter for in-browser graph storage.
  *
- * Runs an in-memory database, ingesting data via CSV bulk-load:
- * files are written to the WASM VFS and loaded with COPY FROM.
+ * Maintains an in-memory database and bulk-loads data through
+ * CSV files written to the WASM virtual filesystem.
  */
 
 import { CodeGraph } from '../graph/types';
@@ -15,29 +15,29 @@ import {
 } from './schema';
 import { generateAllCSVs } from './csv-generator';
 
-// -- Singletons --------------------------------------------------------------
+/* ── Module-level state ──────────────────────────────── */
 
 let wasmLib: any = null;
 let database: any = null;
 let connection: any = null;
 
-// Tables requiring backtick-quoting in DDL
+/* Tables that need backtick-escaping in Cypher */
 const QUOTED_TABLE_NAMES = new Set<string>([
   'Struct', 'Enum', 'Macro', 'Typedef', 'Union', 'Namespace', 'Trait', 'Impl',
   'TypeAlias', 'Const', 'Static', 'Property', 'Record', 'Delegate', 'Annotation',
   'Constructor', 'Template', 'Module',
 ]);
 
-// CSV options: auto-detect off to prevent backslash misinterpretation, RFC 4180 quoting
+/* CSV import flags: RFC 4180 quoting, auto-detect disabled to avoid backslash issues */
 const CSV_IMPORT_OPTS = `(HEADER=true, ESCAPE='"', DELIM=',', QUOTE='"', PARALLEL=false, auto_detect=false)`;
 
-// -- Internal helpers --------------------------------------------------------
+/* ── Internal utilities ──────────────────────────────── */
 
-/** Backtick-quote table names when needed. */
+/* Wrap reserved table names in backticks */
 const quoteName = (name: string): string =>
   QUOTED_TABLE_NAMES.has(name) ? `\`${name}\`` : name;
 
-/** COPY FROM statement for a node table. */
+/* Build a COPY FROM statement for a given node table */
 const makeCopyStatement = (table: NodeTableName, csvPath: string): string => {
   const escaped = quoteName(table);
   switch (table) {
@@ -50,19 +50,19 @@ const makeCopyStatement = (table: NodeTableName, csvPath: string): string => {
     case 'Process':
       return `COPY ${escaped}(id, label, heuristicLabel, processType, stepCount, communities, entryPointId, terminalId) FROM "${csvPath}" ${CSV_IMPORT_OPTS}`;
     default:
-      // Shared column layout for code-element tables
+      /* Default: shared columns for all code-element tables */
       return `COPY ${escaped}(id, name, filePath, startLine, endLine, isExported, content) FROM "${csvPath}" ${CSV_IMPORT_OPTS}`;
   }
 };
 
-/** Infer table name from a node ID prefix. */
+/* Derive the table name from a node's ID prefix */
 const inferTableFromId = (nodeId: string): string => {
   if (nodeId.startsWith('comm_')) return 'Community';
   if (nodeId.startsWith('proc_')) return 'Process';
   return nodeId.split(':')[0];
 };
 
-/** Extract column names from a Cypher RETURN clause. */
+/* Parse column aliases out of a Cypher RETURN clause */
 const extractColumnNames = (cypher: string): string[] => {
   const seg = cypher.match(/RETURN\s+(.+?)(?:\s+ORDER|\s+LIMIT|\s+SKIP|\s*$)/is);
   if (!seg) return [];
@@ -78,9 +78,9 @@ const extractColumnNames = (cypher: string): string[] => {
   });
 };
 
-// -- Public API --------------------------------------------------------------
+/* ── Exported functions ──────────────────────────────── */
 
-/** Bootstrap KuzuDB WASM and create the in-memory database. */
+/* Start the WASM engine and create an in-memory database */
 export const initKuzu = async () => {
   if (connection) return { db: database, conn: connection, kuzu: wasmLib };
 
@@ -99,7 +99,7 @@ export const initKuzu = async () => {
 
     if (import.meta.env.DEV) console.log('[prowl:kuzu] wasm initialized');
 
-    // Run DDL, tolerating "already exists"
+    /* Execute schema DDL; skip statements that fail (table already exists) */
     let idx = 0;
     while (idx < SCHEMA_QUERIES.length) {
       try {
@@ -120,12 +120,12 @@ export const initKuzu = async () => {
   }
 };
 
-/** Bulk-load a CodeGraph into KuzuDB via CSV COPY FROM. */
+/* Ingest a full CodeGraph into KuzuDB using CSV bulk import */
 export const loadGraphToKuzu = async (
   graph: CodeGraph,
   fileContents: Map<string, string>,
 ) => {
-  // Reset the in-memory DB to get a clean slate (drops all data + indexes)
+  /* Drop existing data so we start fresh */
   await closeKuzu();
   const { conn, kuzu } = await initKuzu();
 
@@ -135,14 +135,14 @@ export const loadGraphToKuzu = async (
     const csvPayload = generateAllCSVs(graph, fileContents);
     const vfs = kuzu.FS;
 
-    // Write node CSVs to the VFS
+    /* Write per-table CSV files to the WASM VFS */
     const pendingFiles: Array<{ table: NodeTableName; filePath: string }> = [];
     const tableEntries = Array.from(csvPayload.nodes.entries());
     let tIdx = 0;
     while (tIdx < tableEntries.length) {
       const [tblName, csvText] = tableEntries[tIdx];
       tIdx++;
-      // Skip header-only tables
+      /* Skip tables that only have a header row */
       const lineCount = csvText.split('\n').length;
       if (lineCount <= 1) continue;
       const dest = '/' + tblName.toLowerCase() + '.csv';
@@ -151,7 +151,7 @@ export const loadGraphToKuzu = async (
       pendingFiles.push({ table: tblName, filePath: dest });
     }
 
-    // Parse edge rows from CSV (skip header)
+    /* Split the edge CSV into individual rows (header excluded) */
     const relRows = csvPayload.relCSV.split('\n').slice(1).filter((ln: string) => ln.trim());
     const totalRels = relRows.length;
 
@@ -159,7 +159,7 @@ export const loadGraphToKuzu = async (
       console.log(`[prowl:kuzu] wrote ${pendingFiles.length} node CSVs, ${totalRels} relations to insert`);
     }
 
-    // Load node tables first (edges reference nodes)
+    /* Import node CSVs first — edges depend on nodes existing */
     let fIdx = 0;
     while (fIdx < pendingFiles.length) {
       const { table, filePath } = pendingFiles[fIdx];
@@ -167,7 +167,7 @@ export const loadGraphToKuzu = async (
       fIdx++;
     }
 
-    // Insert edges individually (COPY FROM unsupported for multi-pair REL tables)
+    /* Insert edges one by one (COPY FROM not supported for polymorphic REL tables) */
     const knownTables = new Set<string>(NODE_TABLES as readonly string[]);
     let successCount = 0;
     let failCount = 0;
@@ -191,7 +191,7 @@ export const loadGraphToKuzu = async (
         const srcTable = inferTableFromId(srcId);
         const dstTable = inferTableFromId(dstId);
 
-        // Both endpoints must be known tables
+        /* Skip edges whose endpoints aren't in the schema */
         if (!knownTables.has(srcTable) || !knownTables.has(dstTable)) {
           failCount++;
           continue;
@@ -228,7 +228,7 @@ export const loadGraphToKuzu = async (
       }
     }
 
-    // Verify node counts
+    /* Tally loaded nodes across all tables for the summary log */
     let nodeTotal = 0;
     for (const tName of NODE_TABLES) {
       try {
@@ -236,13 +236,13 @@ export const loadGraphToKuzu = async (
         const r = await qr.getNext();
         nodeTotal += Number(r ? (r.cnt ?? r[0] ?? 0) : 0);
       } catch {
-        // empty or absent table
+        /* table empty or not created */
       }
     }
 
     if (import.meta.env.DEV) console.log(`[prowl:kuzu] bulk load complete — ${nodeTotal} nodes, ${successCount} edges`);
 
-    // Clean up temp CSV files
+    /* Remove temporary CSV files from the VFS */
     pendingFiles.forEach(async ({ filePath }) => {
       try { await vfs.unlink(filePath); } catch { /* noop */ }
     });
@@ -254,7 +254,7 @@ export const loadGraphToKuzu = async (
   }
 };
 
-/** Execute a Cypher query, returning named objects. */
+/* Run a Cypher query and return rows as named-property objects */
 export const executeQuery = async (cypher: string): Promise<any[]> => {
   if (!connection) await initKuzu();
 
@@ -280,7 +280,7 @@ export const executeQuery = async (cypher: string): Promise<any[]> => {
   }
 };
 
-/** Database node/edge counts. */
+/* Aggregate node and edge counts from the database */
 export const getKuzuStats = async (): Promise<{ nodes: number; edges: number }> => {
   if (!connection) return { nodes: 0, edges: 0 };
 
@@ -292,7 +292,7 @@ export const getKuzuStats = async (): Promise<{ nodes: number; edges: number }> 
         const row = await res.getNext();
         nodeTally += Number(row?.cnt ?? row?.[0] ?? 0);
       } catch {
-        // empty or missing
+        /* table absent or empty */
       }
     }
 
@@ -302,7 +302,7 @@ export const getKuzuStats = async (): Promise<{ nodes: number; edges: number }> 
       const eRow = await eRes.getNext();
       edgeTally = Number(eRow?.cnt ?? eRow?.[0] ?? 0);
     } catch {
-      // no edges
+      /* edge table empty */
     }
 
     return { nodes: nodeTally, edges: edgeTally };
@@ -312,12 +312,12 @@ export const getKuzuStats = async (): Promise<{ nodes: number; edges: number }> 
   }
 };
 
-/** True when KuzuDB is initialised. */
+/* Whether the database and connection are live */
 export const isKuzuReady = (): boolean => {
   return connection !== null && database !== null;
 };
 
-/** Close the database and connection (preserves WASM module for fast re-init). */
+/* Shut down the connection and database handle; keeps WASM loaded for quick restart */
 export const closeKuzu = async (): Promise<void> => {
   if (connection) {
     try { await connection.close(); } catch { /* noop */ }
@@ -329,7 +329,7 @@ export const closeKuzu = async (): Promise<void> => {
   }
 };
 
-/** Execute a prepared Cypher statement with parameters. */
+/* Execute a parameterised Cypher statement via prepare + execute */
 export const executePrepared = async (
   cypher: string,
   params: Record<string, any>,
@@ -357,7 +357,7 @@ export const executePrepared = async (
   }
 };
 
-/** Execute a prepared statement with multiple parameter sets in sub-batches. */
+/* Run a prepared statement against multiple parameter sets, yielding between sub-batches */
 export const executeWithReusedStatement = async (
   cypher: string,
   paramsList: Array<Record<string, any>>,
@@ -387,21 +387,21 @@ export const executeWithReusedStatement = async (
     }
 
     offset += CHUNK;
-    // Yield between chunks
+    /* Yield to the event loop between sub-batches */
     if (offset < paramsList.length) {
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
   }
 };
 
-/** Verify array parameter support in prepared statements. */
+/* Diagnostic: verify that FLOAT[] array params round-trip correctly */
 export const testArrayParams = async (): Promise<{ success: boolean; error?: string }> => {
   if (!connection) await initKuzu();
 
   try {
     const sampleVec = Array.from({ length: 384 }, (_, pos) => pos / 384);
 
-    // Find any node for test anchor
+    /* Locate any existing node to use as a test anchor */
     let anchorId: string | null = null;
     for (const tName of NODE_TABLES) {
       try {
@@ -420,7 +420,7 @@ export const testArrayParams = async (): Promise<{ success: boolean; error?: str
 
     if (import.meta.env.DEV) console.log('[prowl:kuzu] testing array params with node:', anchorId);
 
-    // Write a test embedding
+    /* Insert a synthetic embedding vector */
     const insertCypher = `CREATE (e:${VECTOR_TABLE} {nodeId: $nodeId, embedding: $embedding})`;
     const stmtHandle = await connection.prepare(insertCypher);
     if (!stmtHandle.isSuccess()) {
@@ -431,7 +431,7 @@ export const testArrayParams = async (): Promise<{ success: boolean; error?: str
     await connection.execute(stmtHandle, { nodeId: anchorId, embedding: sampleVec });
     await stmtHandle.close();
 
-    // Verify round-trip
+    /* Read it back and confirm the dimensions match */
     const check = await connection.query(
       `MATCH (e:${VECTOR_TABLE} {nodeId: '${anchorId}'}) RETURN e.embedding AS emb`,
     );

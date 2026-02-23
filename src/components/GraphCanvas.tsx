@@ -39,7 +39,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
     return next;
   }, [highlightedNodeIds, aiCitationHighlightedNodeIds, aiToolHighlightedNodeIds, isAIHighlightsEnabled]);
 
-  // Impact-zone nodes gated by AI highlight toggle
+  /* Blast-radius nodes — only visible when the AI highlight toggle is on */
   const highlightedImpactIds = useMemo(() => {
     if (!isAIHighlightsEnabled) return new Set<string>();
     return blastRadiusNodeIds;
@@ -127,11 +127,11 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
     }
   }), [setHighlightedNodeIds, graph, setSigmaGraph]);
 
-  // Sync sigma graph whenever the project graph updates
+  /* Rebuild the sigma graph each time the project graph changes */
   useEffect(() => {
     if (!graph) return;
 
-    // Derive community index for each node from MEMBER_OF edges
+    /* Map each node to its community via MEMBER_OF relationships */
     const communityMemberships = new Map<string, number>();
     graph.relationships.forEach(rel => {
       if (rel.type === 'MEMBER_OF') {

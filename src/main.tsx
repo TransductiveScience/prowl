@@ -4,14 +4,16 @@ import * as BufferModule from 'buffer';
 import App from './App';
 import './index.css';
 
-// isomorphic-git depends on Node's Buffer API
-const Buffer = BufferModule.Buffer || BufferModule;
-if (!globalThis.Buffer) globalThis.Buffer = Buffer;
+/* isomorphic-git needs the Buffer global available at runtime */
+const Buf = BufferModule.Buffer ?? BufferModule;
+if (typeof globalThis.Buffer === 'undefined') {
+  (globalThis as Record<string, unknown>).Buffer = Buf;
+}
 
-const container = document.getElementById('root');
-if (!container) throw new Error('Root element not found');
+const root = document.getElementById('root');
+if (root === null) throw new Error('Missing #root mount point');
 
-createRoot(container).render(
+createRoot(root).render(
   <StrictMode>
     <App />
   </StrictMode>,

@@ -1,111 +1,116 @@
 /**
- * Converts code graph nodes into plain-text for embedding models.
- * Each node type yields a structured header plus a trimmed code snippet.
+ * Transforms graph nodes into plain-text suitable for embedding models.
+ * Dispatches on node label to produce structured representations.
  */
 
 import type { EmbeddableNode, EmbeddingConfig } from './types';
 import { DEFAULT_EMBEDDING_CONFIG } from './types';
 
-/* Per-label text production strategy */
-type TextProducer = (node: EmbeddableNode, snippetCap: number) => string;
+/* ── Formatting strategy per label ───────────────────── */
 
-/** Extract filename from a full path. */
-const extractFilename = (fullPath: string): string => {
-  const idx = fullPath.lastIndexOf('/');
-  return idx >= 0 ? fullPath.substring(idx + 1) : fullPath;
-};
+type Formatter = (node: EmbeddableNode, snippetCap: number) => string;
 
-/** Extract parent directory from a full path. */
-const extractParentDir = (fullPath: string): string => {
-  const idx = fullPath.lastIndexOf('/');
-  return idx >= 0 ? fullPath.substring(0, idx) : '';
-};
+/* Pull the trailing filename component from a path */
+function basename(fullPath: string): string {
+  const sep = fullPath.lastIndexOf('/');
+  return sep >= 0 ? fullPath.substring(sep + 1) : fullPath;
+}
 
-/** Truncate text to a budget, preferring word boundaries. */
-const capText = (text: string, budget: number): string => {
+/* Pull everything before the last slash */
+function dirname(fullPath: string): string {
+  const sep = fullPath.lastIndexOf('/');
+  return sep >= 0 ? fullPath.substring(0, sep) : '';
+}
+
+/* Shorten text to a budget, preferring a word boundary cut */
+function truncate(text: string, budget: number): string {
   if (text.length <= budget) return text;
 
-  const slice = text.substring(0, budget);
-  const boundary = slice.lastIndexOf(' ');
+  const chunk = text.substring(0, budget);
+  const ws = chunk.lastIndexOf(' ');
 
-  if (boundary > budget * 0.8) {
-    return slice.substring(0, boundary) + '...';
+  if (ws > budget * 0.8) {
+    return chunk.substring(0, ws) + '...';
   }
-  return slice + '...';
-};
+  return chunk + '...';
+}
 
-/** Normalise whitespace: unify line endings, collapse blanks, trim trailing spaces. */
-const sanitizeSource = (raw: string): string => {
+/* Collapse runs of blank lines and strip trailing whitespace on each line */
+function normalizeWhitespace(raw: string): string {
   const unified = raw.replace(/\r\n/g, '\n');
-  const collapsed = unified.replace(/\n{3,}/g, '\n\n');
-  return collapsed
+  const compacted = unified.replace(/\n{3,}/g, '\n\n');
+  return compacted
     .split('\n')
     .reduce<string[]>((acc, ln) => { acc.push(ln.trimEnd()); return acc; }, [])
     .join('\n')
     .trim();
-};
+}
 
-/** Structured text for code-element nodes (Function, Class, Method, Interface). */
-const buildCodeElementText = (
+/* ── Per-label formatters ────────────────────────────── */
+
+/* Structured text block for code symbols (Function, Class, Method, Interface) */
+function formatSymbol(
   kind: string,
   node: EmbeddableNode,
-  snippetCap: number
-): string => {
-  const header = [`${kind}: ${node.name}`, `File: ${extractFilename(node.filePath)}`];
+  snippetCap: number,
+): string {
+  const lines = [`${kind}: ${node.name}`, `File: ${basename(node.filePath)}`];
 
-  const dir = extractParentDir(node.filePath);
-  if (dir) header.push(`Directory: ${dir}`);
+  const parent = dirname(node.filePath);
+  if (parent) lines.push(`Directory: ${parent}`);
 
   if (node.content) {
-    const cleaned = sanitizeSource(node.content);
-    header.push('', capText(cleaned, snippetCap));
+    const cleaned = normalizeWhitespace(node.content);
+    lines.push('', truncate(cleaned, snippetCap));
   }
 
-  return header.join('\n');
-};
+  return lines.join('\n');
+}
 
-/** Text for File nodes (shorter snippet ceiling). */
-const buildFileText: TextProducer = (node, snippetCap) => {
-  const segments = [`File: ${node.name}`, `Path: ${node.filePath}`];
+/* Text block for File nodes — uses a smaller snippet ceiling */
+const formatFile: Formatter = (node, snippetCap) => {
+  const lines = [`File: ${node.name}`, `Path: ${node.filePath}`];
 
   if (node.content) {
-    const cleaned = sanitizeSource(node.content);
+    const cleaned = normalizeWhitespace(node.content);
     const ceiling = snippetCap < 300 ? snippetCap : 300;
-    segments.push('', capText(cleaned, ceiling));
+    lines.push('', truncate(cleaned, ceiling));
   }
 
-  return segments.join('\n');
+  return lines.join('\n');
 };
 
-/** Label-to-producer dispatch. */
-const PRODUCERS: Record<string, TextProducer> = {
-  Function: (n, cap) => buildCodeElementText('Function', n, cap),
-  Class:    (n, cap) => buildCodeElementText('Class', n, cap),
-  Method:   (n, cap) => buildCodeElementText('Method', n, cap),
-  Interface:(n, cap) => buildCodeElementText('Interface', n, cap),
-  File:     buildFileText,
+/* ── Dispatch table ──────────────────────────────────── */
+
+const FORMATTERS: Record<string, Formatter> = {
+  Function:  (n, cap) => formatSymbol('Function', n, cap),
+  Class:     (n, cap) => formatSymbol('Class', n, cap),
+  Method:    (n, cap) => formatSymbol('Method', n, cap),
+  Interface: (n, cap) => formatSymbol('Interface', n, cap),
+  File:      formatFile,
 };
 
-/** Produce embedding text for a single node, dispatched by label. */
-export const generateEmbeddingText = (
+/* ── Public API ──────────────────────────────────────── */
+
+/* Render embedding text for one node, delegating to the right formatter */
+export function generateEmbeddingText(
   node: EmbeddableNode,
-  config: Partial<EmbeddingConfig> = {}
-): string => {
+  config: Partial<EmbeddingConfig> = {},
+): string {
   const snippetLimit = config.maxSnippetLength ?? DEFAULT_EMBEDDING_CONFIG.maxSnippetLength;
-  const producer = PRODUCERS[node.label];
+  const fmt = FORMATTERS[node.label];
 
-  if (producer) return producer(node, snippetLimit);
+  if (fmt) return fmt(node, snippetLimit);
 
-  // Fallback for unknown labels
   return `${node.label}: ${node.name}\nPath: ${node.filePath}`;
-};
+}
 
-/** Produce embedding texts for a batch of nodes (order preserved). */
-export const prepareBatchTexts = (
+/* Render embedding texts for a batch, keeping original order */
+export function prepareBatchTexts(
   nodes: EmbeddableNode[],
-  config: Partial<EmbeddingConfig> = {}
-): string[] => {
+  config: Partial<EmbeddingConfig> = {},
+): string[] {
   const out: string[] = [];
-  nodes.forEach((nd) => out.push(generateEmbeddingText(nd, config)));
+  for (const nd of nodes) out.push(generateEmbeddingText(nd, config));
   return out;
-};
+}

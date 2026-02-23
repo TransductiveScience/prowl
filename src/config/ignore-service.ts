@@ -1,10 +1,13 @@
-interface Matcher {
+/* ── Filter rule shape ───────────────────────────────── */
+
+interface Rule {
   type: 'segment' | 'extension' | 'filename' | 'pattern';
   value: string | RegExp;
 }
 
-// Build artifacts
-const buildArtifacts = {
+/* ── Compiled output and build artifacts ────────────── */
+
+const compiledOutput = {
   segments: [
     'dist', 'build', 'out', 'output', 'bin', 'obj', 'target',
     '.next', '.nuxt', '.output', '.vercel', '.netlify', '.serverless',
@@ -25,8 +28,9 @@ const buildArtifacts = {
   ],
 };
 
-// Dependencies
-const dependencies = {
+/* ── Package manager and dependency directories ─────── */
+
+const packageDeps = {
   segments: [
     'node_modules', 'bower_components', 'jspm_packages', 'vendor',
     'venv', '.venv', 'env', '.env',
@@ -42,8 +46,9 @@ const dependencies = {
   ],
 };
 
-// IDE & editor config
-const ideConfig = {
+/* ── Editor and tooling configuration ───────────────── */
+
+const editorSettings = {
   segments: [
     '.idea', '.vscode', '.vs', '.eclipse', '.settings',
     '.husky', '.github', '.circleci', '.gitlab',
@@ -57,8 +62,9 @@ const ideConfig = {
   ],
 };
 
-// Media & binary
-const mediaBinary = {
+/* ── Media, fonts, and binary assets ────────────────── */
+
+const mediaAndBinary = {
   segments: [] as string[],
   extensions: [
     '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.webp', '.bmp', '.tiff', '.tif',
@@ -78,8 +84,9 @@ const mediaBinary = {
   ],
 };
 
-// Security
-const security = {
+/* ── Sensitive or credential files ──────────────────── */
+
+const sensitiveFiles = {
   segments: [] as string[],
   extensions: [
     '.pem', '.key', '.crt', '.cer', '.p12', '.pfx',
@@ -91,8 +98,9 @@ const security = {
   ],
 };
 
-// Version control
-const versionControl = {
+/* ── Source control metadata ────────────────────────── */
+
+const scmMetadata = {
   segments: [
     '.git', '.svn', '.hg', '.bzr',
   ],
@@ -104,68 +112,74 @@ const versionControl = {
   ],
 };
 
-const compoundExtensionPattern = /\.(?:min\.js|min\.css|bundle\.js|chunk\.js)$/;
-const generatedPattern = /\.(?:generated\.|d\.ts$)/;
-const bundledContentPattern = /\.(?:bundle\.|chunk\.|generated\.)/;
+/* ── Compound / generated file patterns ─────────────── */
 
-const groups = [buildArtifacts, dependencies, ideConfig, mediaBinary, security, versionControl];
+const MINIFIED_PATTERN = /\.(?:min\.js|min\.css|bundle\.js|chunk\.js)$/;
+const GENERATED_PATTERN = /\.(?:generated\.|d\.ts$)/;
+const BUNDLED_PATTERN = /\.(?:bundle\.|chunk\.|generated\.)/;
 
-const matchers: Matcher[] = [];
+/* ── Assemble all rules from every category ─────────── */
 
-for (const group of groups) {
-  for (const seg of group.segments) {
-    matchers.push({ type: 'segment', value: seg });
+const allCategories = [compiledOutput, packageDeps, editorSettings, mediaAndBinary, sensitiveFiles, scmMetadata];
+
+const rules: Rule[] = [];
+
+for (const cat of allCategories) {
+  for (const seg of cat.segments) {
+    rules.push({ type: 'segment', value: seg });
   }
-  for (const ext of group.extensions) {
-    matchers.push({ type: 'extension', value: ext });
+  for (const ext of cat.extensions) {
+    rules.push({ type: 'extension', value: ext });
   }
-  if ('filenames' in group) {
-    for (const fname of (group as { filenames: string[] }).filenames) {
-      matchers.push({ type: 'filename', value: fname });
+  if ('filenames' in cat) {
+    for (const fname of (cat as { filenames: string[] }).filenames) {
+      rules.push({ type: 'filename', value: fname });
     }
   }
 }
 
-matchers.push({ type: 'pattern', value: compoundExtensionPattern });
-matchers.push({ type: 'pattern', value: generatedPattern });
-matchers.push({ type: 'pattern', value: bundledContentPattern });
+rules.push({ type: 'pattern', value: MINIFIED_PATTERN });
+rules.push({ type: 'pattern', value: GENERATED_PATTERN });
+rules.push({ type: 'pattern', value: BUNDLED_PATTERN });
 
-export const shouldIgnorePath = (filePath: string): boolean => {
-  const normalizedPath = filePath.replace(/\\/g, '/');
-  const parts = normalizedPath.split('/');
+/* ── Public predicate ───────────────────────────────── */
+
+export function shouldIgnorePath(filePath: string): boolean {
+  const posixPath = filePath.replace(/\\/g, '/');
+  const parts = posixPath.split('/');
   const fileName = parts[parts.length - 1];
-  const fileNameLower = fileName.toLowerCase();
+  const lowered = fileName.toLowerCase();
 
-  const lastDotIndex = fileNameLower.lastIndexOf('.');
+  const dotPos = lowered.lastIndexOf('.');
   let ext = '';
   let compoundExt = '';
-  if (lastDotIndex !== -1) {
-    ext = fileNameLower.substring(lastDotIndex);
-    const secondLastDot = fileNameLower.lastIndexOf('.', lastDotIndex - 1);
-    if (secondLastDot !== -1) {
-      compoundExt = fileNameLower.substring(secondLastDot);
+  if (dotPos !== -1) {
+    ext = lowered.substring(dotPos);
+    const prevDot = lowered.lastIndexOf('.', dotPos - 1);
+    if (prevDot !== -1) {
+      compoundExt = lowered.substring(prevDot);
     }
   }
 
-  for (const matcher of matchers) {
-    switch (matcher.type) {
+  for (const rule of rules) {
+    switch (rule.type) {
       case 'segment':
         for (const part of parts) {
-          if (part === matcher.value) return true;
+          if (part === rule.value) return true;
         }
         break;
       case 'extension':
-        if (ext === matcher.value) return true;
-        if (compoundExt === matcher.value) return true;
+        if (ext === rule.value) return true;
+        if (compoundExt === rule.value) return true;
         break;
       case 'filename':
-        if (fileName === matcher.value || fileNameLower === (matcher.value as string).toLowerCase()) return true;
+        if (fileName === rule.value || lowered === (rule.value as string).toLowerCase()) return true;
         break;
       case 'pattern':
-        if ((matcher.value as RegExp).test(fileNameLower)) return true;
+        if ((rule.value as RegExp).test(lowered)) return true;
         break;
     }
   }
 
   return false;
-};
+}

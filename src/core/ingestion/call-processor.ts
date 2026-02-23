@@ -1,15 +1,16 @@
-import { CodeGraph } from '../graph/types';
-import { ASTCache } from './ast-cache';
-import { SymbolTable } from './symbol-table';
-import { ImportMap } from './import-processor';
+import type { CodeGraph } from '../graph/types';
+import type { ASTCache } from './ast-cache';
+import type { SymbolTable } from './symbol-table';
+import type { ImportMap } from './import-processor';
 import { loadParser, loadLanguage } from '../tree-sitter/parser-loader';
 import { LANGUAGE_QUERIES } from './tree-sitter-queries';
 import { generateId } from '../../lib/utils';
 import { getLanguageFromFilename } from './utils';
 
-// Standard library and language built-in names excluded from call resolution
-const WELL_KNOWN_NAMES: Set<string> = new Set([
-  // JS/TS runtime
+/* Names that are part of the language runtime and should never
+   produce a CALLS edge into project code. */
+const RUNTIME_NAMES: ReadonlySet<string> = new Set([
+  /* JS/TS globals */
   'console', 'log', 'warn', 'error', 'info', 'debug',
   'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
   'parseInt', 'parseFloat', 'isNaN', 'isFinite',
@@ -21,117 +22,98 @@ const WELL_KNOWN_NAMES: Set<string> = new Set([
   'Math', 'Date', 'RegExp', 'Error',
   'require', 'import', 'export',
   'fetch', 'Response', 'Request',
-  // React hooks
+  /* React primitives */
   'useState', 'useEffect', 'useCallback', 'useMemo', 'useRef', 'useContext',
   'useReducer', 'useLayoutEffect', 'useImperativeHandle', 'useDebugValue',
   'createElement', 'createContext', 'createRef', 'forwardRef', 'memo', 'lazy',
-  // Iteration helpers
+  /* Collection methods */
   'map', 'filter', 'reduce', 'forEach', 'find', 'findIndex', 'some', 'every',
   'includes', 'indexOf', 'slice', 'splice', 'concat', 'join', 'split',
   'push', 'pop', 'shift', 'unshift', 'sort', 'reverse',
   'keys', 'values', 'entries', 'assign', 'freeze', 'seal',
   'hasOwnProperty', 'toString', 'valueOf',
-  // Python stdlib
+  /* Python builtins */
   'print', 'len', 'range', 'str', 'int', 'float', 'list', 'dict', 'set', 'tuple',
   'open', 'read', 'write', 'close', 'append', 'extend', 'update',
   'super', 'type', 'isinstance', 'issubclass', 'getattr', 'setattr', 'hasattr',
   'enumerate', 'zip', 'sorted', 'reversed', 'min', 'max', 'sum', 'abs',
 ]);
 
-// AST node kinds that delimit callable scopes
-const CALLABLE_BOUNDARIES: Set<string> = new Set([
-  'function_declaration',
-  'arrow_function',
-  'function_expression',
-  'method_definition',
-  'generator_function_declaration',
-  'function_definition',
-  'async_function_declaration',
-  'async_arrow_function',
-  'method_declaration',
-  'constructor_declaration',
-  'local_function_statement',
-  'function_item',
-  'impl_item',
+/* AST node types that delimit a callable scope */
+const SCOPE_BOUNDARIES: ReadonlySet<string> = new Set([
+  'function_declaration', 'arrow_function', 'function_expression',
+  'method_definition', 'generator_function_declaration',
+  'function_definition', 'async_function_declaration',
+  'async_arrow_function', 'method_declaration', 'constructor_declaration',
+  'local_function_statement', 'function_item', 'impl_item',
 ]);
 
-/**
- * Resolution outcome carrying confidence metadata.
- */
-interface ResolveResult {
+interface MatchedTarget {
   nodeId: string;
   confidence: number;
   reason: string;
 }
 
 /**
- * Determine whether a name belongs to the standard library or language primitives.
+ * Walk up from a call-site AST node to the nearest enclosing
+ * callable and return its graph node ID (or null for top-level).
  */
-const belongsToRuntime = (identifier: string): boolean => WELL_KNOWN_NAMES.has(identifier);
-
-/**
- * Walk up from a call site to locate the nearest enclosing callable.
- * Returns the graph node ID for that callable, or null for top-level code.
- */
-const locateEnclosingCallable = (
+function enclosingScope(
   callNode: any,
-  srcPath: string,
-  symbols: SymbolTable
-): string | null => {
-  let ancestor = callNode.parent;
+  filePath: string,
+  symbols: SymbolTable,
+): string | null {
+  let anc = callNode.parent;
 
-  while (ancestor) {
-    if (!CALLABLE_BOUNDARIES.has(ancestor.type)) {
-      ancestor = ancestor.parent;
-      continue;
-    }
+  while (anc) {
+    if (!SCOPE_BOUNDARIES.has(anc.type)) { anc = anc.parent; continue; }
 
-    let callableName: string | null = null;
-    let graphLabel = 'Function';
+    let fnName: string | null = null;
+    let tag = 'Function';
 
-    switch (ancestor.type) {
+    switch (anc.type) {
       case 'function_declaration':
       case 'function_definition':
       case 'async_function_declaration':
       case 'generator_function_declaration':
       case 'function_item': {
-        const nameChild = ancestor.childForFieldName?.('name') ??
-          ancestor.children?.find((c: any) => c.type === 'identifier' || c.type === 'property_identifier');
-        callableName = nameChild?.text ?? null;
+        const n = anc.childForFieldName?.('name')
+          ?? anc.children?.find((c: any) => c.type === 'identifier' || c.type === 'property_identifier');
+        fnName = n?.text ?? null;
         break;
       }
       case 'impl_item': {
-        const innerFn = ancestor.children?.find((c: any) => c.type === 'function_item');
-        if (innerFn) {
-          const nameChild = innerFn.childForFieldName?.('name') ??
-            innerFn.children?.find((c: any) => c.type === 'identifier');
-          callableName = nameChild?.text ?? null;
-          graphLabel = 'Method';
+        const inner = anc.children?.find((c: any) => c.type === 'function_item');
+        if (inner) {
+          const n = inner.childForFieldName?.('name')
+            ?? inner.children?.find((c: any) => c.type === 'identifier');
+          fnName = n?.text ?? null;
+          tag = 'Method';
         }
         break;
       }
       case 'method_definition': {
-        const nameChild = ancestor.childForFieldName?.('name') ??
-          ancestor.children?.find((c: any) => c.type === 'property_identifier');
-        callableName = nameChild?.text ?? null;
-        graphLabel = 'Method';
+        const n = anc.childForFieldName?.('name')
+          ?? anc.children?.find((c: any) => c.type === 'property_identifier');
+        fnName = n?.text ?? null;
+        tag = 'Method';
         break;
       }
       case 'method_declaration':
       case 'constructor_declaration': {
-        const nameChild = ancestor.childForFieldName?.('name') ??
-          ancestor.children?.find((c: any) => c.type === 'identifier');
-        callableName = nameChild?.text ?? null;
-        graphLabel = 'Method';
+        const n = anc.childForFieldName?.('name')
+          ?? anc.children?.find((c: any) => c.type === 'identifier');
+        fnName = n?.text ?? null;
+        tag = 'Method';
         break;
       }
       case 'arrow_function':
       case 'function_expression': {
-        const varDecl = ancestor.parent;
-        if (varDecl?.type === 'variable_declarator') {
-          const nameChild = varDecl.childForFieldName?.('name') ??
-            varDecl.children?.find((c: any) => c.type === 'identifier');
-          callableName = nameChild?.text ?? null;
+        const decl = anc.parent;
+        if (decl?.type === 'variable_declarator') {
+          const n = decl.childForFieldName?.('name')
+            ?? decl.children?.find((c: any) => c.type === 'identifier');
+          fnName = n?.text ?? null;
         }
         break;
       }
@@ -139,120 +121,107 @@ const locateEnclosingCallable = (
         break;
     }
 
-    if (callableName) {
-      const exactId = symbols.lookupExact(srcPath, callableName);
-      if (exactId) return exactId;
-      return generateId(graphLabel, `${srcPath}:${callableName}`);
+    if (fnName) {
+      const exact = symbols.lookupExact(filePath, fnName);
+      return exact ?? generateId(tag, `${filePath}:${fnName}`);
     }
 
-    ancestor = ancestor.parent;
+    anc = anc.parent;
   }
 
   return null;
-};
+}
 
 /**
- * Resolve a called identifier to the most likely target node using a tiered strategy.
- * Priority: imported symbols > same-file symbols > project-wide fuzzy match.
+ * Tiered symbol resolution: imported deps -> same file -> global.
  */
-const findTarget = (
-  identifier: string,
+function matchTarget(
+  name: string,
   callerFile: string,
   symbols: SymbolTable,
-  imports: ImportMap
-): ResolveResult | null => {
-  // Tier 1: Look in files that the caller explicitly imports
-  const importedSources = imports.get(callerFile);
-  if (importedSources) {
-    for (const dep of importedSources) {
-      const hit = symbols.lookupExact(dep, identifier);
-      if (hit) {
-        return { nodeId: hit, confidence: 0.9, reason: 'import-resolved' };
-      }
+  imports: ImportMap,
+): MatchedTarget | null {
+  /* Tier 1: symbols from explicitly imported files */
+  const deps = imports.get(callerFile);
+  if (deps) {
+    for (const dep of deps) {
+      const hit = symbols.lookupExact(dep, name);
+      if (hit) return { nodeId: hit, confidence: 0.9, reason: 'import-resolved' };
     }
   }
 
-  // Tier 2: Defined in the same file
-  const sameFileHit = symbols.lookupExact(callerFile, identifier);
-  if (sameFileHit) {
-    return { nodeId: sameFileHit, confidence: 0.85, reason: 'same-file' };
-  }
+  /* Tier 2: defined in same file */
+  const local = symbols.lookupExact(callerFile, name);
+  if (local) return { nodeId: local, confidence: 0.85, reason: 'same-file' };
 
-  // Tier 3: Global fuzzy search across all files
-  const candidates = symbols.lookupFuzzy(identifier);
-  if (candidates.length > 0) {
-    const conf = candidates.length === 1 ? 0.5 : 0.3;
-    return { nodeId: candidates[0].nodeId, confidence: conf, reason: 'fuzzy-global' };
+  /* Tier 3: project-wide scan */
+  const global = symbols.lookupFuzzy(name);
+  if (global.length > 0) {
+    const conf = global.length === 1 ? 0.5 : 0.3;
+    return { nodeId: global[0].nodeId, confidence: conf, reason: 'fuzzy-global' };
   }
 
   return null;
-};
+}
 
-export const processCalls = async (
+export async function processCalls(
   graph: CodeGraph,
   files: { path: string; content: string }[],
   astCache: ASTCache,
   symbolTable: SymbolTable,
   importMap: ImportMap,
-  onProgress?: (current: number, total: number) => void
-) => {
+  onProgress?: (current: number, total: number) => void,
+): Promise<void> {
   const parser = await loadParser();
-  const totalFiles = files.length;
 
-  for (let pos = 0; pos < totalFiles; pos++) {
-    const src = files[pos];
-    onProgress?.(pos + 1, totalFiles);
+  for (let i = 0; i < files.length; i++) {
+    const src = files[i];
+    onProgress?.(i + 1, files.length);
 
     const lang = getLanguageFromFilename(src.path);
     if (!lang) continue;
 
-    const queryText = LANGUAGE_QUERIES[lang];
-    if (!queryText) continue;
+    const qText = LANGUAGE_QUERIES[lang];
+    if (!qText) continue;
 
     await loadLanguage(lang, src.path);
 
-    let ast = astCache.get(src.path);
-    let needsCleanup = false;
-
-    if (!ast) {
-      ast = parser.parse(src.content);
-      needsCleanup = true;
+    let tree = astCache.get(src.path);
+    let owned = false;
+    if (!tree) {
+      tree = parser.parse(src.content);
+      owned = true;
     }
 
-    let queryHandle;
-    let matchList;
+    let matches: any[];
     try {
-      queryHandle = parser.getLanguage().query(queryText);
-      matchList = queryHandle.matches(ast.rootNode);
-    } catch (qErr) {
-      console.warn(`Query error for ${src.path}:`, qErr);
-      if (needsCleanup) ast.delete();
+      const q = parser.getLanguage().query(qText);
+      matches = q.matches(tree.rootNode);
+    } catch (err) {
+      console.warn(`[prowl:calls] query failed for ${src.path}`, err);
+      if (owned) tree.delete();
       continue;
     }
 
-    for (const m of matchList) {
-      const nodes: Record<string, any> = {};
-      m.captures.forEach(c => { nodes[c.name] = c.node; });
+    for (const m of matches) {
+      const cap: Record<string, any> = {};
+      for (const c of m.captures) cap[c.name] = c.node;
 
-      if (!nodes['call']) continue;
-
-      const calleeNode = nodes['call.name'];
+      if (!cap['call']) continue;
+      const calleeNode = cap['call.name'];
       if (!calleeNode) continue;
 
       const calleeName = calleeNode.text;
-      if (belongsToRuntime(calleeName)) continue;
+      if (RUNTIME_NAMES.has(calleeName)) continue;
 
-      const target = findTarget(calleeName, src.path, symbolTable, importMap);
+      const target = matchTarget(calleeName, src.path, symbolTable, importMap);
       if (!target) continue;
 
-      const callSiteNode = nodes['call'];
-      const callerId = locateEnclosingCallable(callSiteNode, src.path, symbolTable)
+      const callerId = enclosingScope(cap['call'], src.path, symbolTable)
         ?? generateId('File', src.path);
 
-      const edgeId = generateId('CALLS', `${callerId}:${calleeName}->${target.nodeId}`);
-
       graph.addRelationship({
-        id: edgeId,
+        id: generateId('CALLS', `${callerId}:${calleeName}->${target.nodeId}`),
         sourceId: callerId,
         targetId: target.nodeId,
         type: 'CALLS',
@@ -261,8 +230,6 @@ export const processCalls = async (
       });
     }
 
-    if (needsCleanup) {
-      ast.delete();
-    }
+    if (owned) tree.delete();
   }
-};
+}

@@ -1,10 +1,10 @@
 /**
- * Settings Service
+ * LLM Configuration Persistence
  *
- * Persists LLM provider configuration.
- * Non-secret values go to localStorage; API keys are encrypted
- * through Electron's safeStorage (OS keychain) when available,
- * with a plain localStorage fallback for browser dev mode.
+ * Stores provider settings across sessions.
+ * Secrets are encrypted via the OS keychain (Electron safeStorage)
+ * when running in the desktop app; falls back to plain localStorage
+ * in browser-based development mode.
  */
 
 import {
@@ -23,12 +23,12 @@ import {
 
 const STORAGE_KEY = 'prowl-llm-settings';
 
-// ── Secure Storage ──
+/* ── Keychain integration ── */
 let secureKeyCache: Record<string, string> = {};
 let secureStorageAvailable = false;
 let secureStorageInitialized = false;
 
-// Provider-to-keychain key mapping
+/* Map each provider to its keychain slot name */
 const SECURE_KEY_MAP: Record<string, string> = {
   openai: 'prowl-key-openai',
   'azure-openai': 'prowl-key-azure',
@@ -40,7 +40,7 @@ const SECURE_KEY_MAP: Record<string, string> = {
 
 const isElectron = () => typeof window !== 'undefined' && !!(window as any).prowl?.secureStorage;
 
-/** Call once at startup to load encrypted keys and migrate any plaintext leftovers. */
+/* Bootstrap: pull encrypted keys from the OS keychain and migrate any plain-text remnants */
 export const initSecureStorage = async (): Promise<void> => {
   if (secureStorageInitialized) return;
   secureStorageInitialized = true;
@@ -59,7 +59,7 @@ export const initSecureStorage = async (): Promise<void> => {
       }
     }
 
-    // Migrate any leftover plaintext keys to secure storage
+    /* Move any residual plain-text keys into the keychain */
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
       const parsed = JSON.parse(stored) as any;
@@ -87,10 +87,10 @@ export const initSecureStorage = async (): Promise<void> => {
   }
 };
 
-/** Whether the OS keychain is available and active. */
+/* Reports whether the OS keychain was successfully activated */
 export const isSecureStorageActive = (): boolean => secureStorageAvailable;
 
-/** Synchronously load settings, overlaying cached secure keys. */
+/* Read settings from localStorage, overlaying any keychain-cached secrets */
 export const loadSettings = (): LLMSettings => {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
@@ -129,7 +129,7 @@ export const loadSettings = (): LLMSettings => {
       },
     };
 
-    // Secure keys take precedence over anything left in localStorage
+    /* Keychain values override any leftover plain-text keys */
     if (secureStorageAvailable) {
       if (secureKeyCache.openai) settings.openai!.apiKey = secureKeyCache.openai;
       if (secureKeyCache['azure-openai']) settings.azureOpenAI!.apiKey = secureKeyCache['azure-openai'];
@@ -146,11 +146,11 @@ export const loadSettings = (): LLMSettings => {
   }
 };
 
-/** Persist settings (API keys go to secure storage when available). */
+/* Write settings to disk; secrets route to the keychain when possible */
 export const saveSettings = (settings: LLMSettings): void => {
   try {
     if (secureStorageAvailable && isElectron()) {
-      // Persist API keys in the OS keychain (fire-and-forget)
+      /* Store secrets in the OS keychain (fire-and-forget) */
       const prowl = (window as any).prowl;
       const keyUpdates: Array<[string, string, string]> = [
         ['openai', SECURE_KEY_MAP.openai, settings.openai?.apiKey ?? ''],
@@ -171,7 +171,7 @@ export const saveSettings = (settings: LLMSettings): void => {
         }
       }
 
-      // Scrub API keys from the localStorage version
+      /* Strip secrets before writing to localStorage */
       const sanitized = JSON.parse(JSON.stringify(settings));
       if (sanitized.openai) sanitized.openai.apiKey = '';
       if (sanitized.azureOpenAI) sanitized.azureOpenAI.apiKey = '';
@@ -181,7 +181,7 @@ export const saveSettings = (settings: LLMSettings): void => {
       if (sanitized.groq) sanitized.groq.apiKey = '';
       localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitized));
     } else {
-      // No secure storage — save everything to localStorage (dev/browser mode)
+      /* No keychain available — persist everything to localStorage (dev fallback) */
       localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
     }
   } catch (error) {
@@ -189,7 +189,7 @@ export const saveSettings = (settings: LLMSettings): void => {
   }
 };
 
-/** Merge partial updates into a specific provider's config and persist. */
+/* Apply partial updates to one provider's config and save */
 export const updateProviderSettings = <T extends LLMProvider>(
   provider: T,
   updates: Partial<
@@ -203,7 +203,7 @@ export const updateProviderSettings = <T extends LLMProvider>(
 ): LLMSettings => {
   const current = loadSettings();
 
-  // Handle each provider explicitly to sidestep TS union-spread issues
+  /* Explicit per-provider branches avoid TS union-spread edge cases */
   switch (provider) {
     case 'openai': {
       const updated: LLMSettings = {
@@ -283,7 +283,7 @@ export const updateProviderSettings = <T extends LLMProvider>(
       return updated;
     }
     default: {
-      // Should be unreachable due to T extends LLMProvider, but keep a safe fallback
+      /* Unreachable given T ⊂ LLMProvider, but included as a safety net */
       const updated: LLMSettings = { ...current };
       saveSettings(updated);
       return updated;
@@ -291,7 +291,7 @@ export const updateProviderSettings = <T extends LLMProvider>(
   }
 };
 
-/** Switch the active provider. */
+/* Change which provider is currently selected */
 export const setActiveProvider = (provider: LLMProvider): LLMSettings => {
   const current = loadSettings();
   const updated: LLMSettings = {
@@ -302,7 +302,7 @@ export const setActiveProvider = (provider: LLMProvider): LLMSettings => {
   return updated;
 };
 
-/** Build a ProviderConfig from the currently active provider's saved settings. */
+/* Construct a ProviderConfig for the currently selected provider */
 export const getActiveProviderConfig = (): ProviderConfig | null => {
   const settings = loadSettings();
   
@@ -380,17 +380,17 @@ export const getActiveProviderConfig = (): ProviderConfig | null => {
   }
 };
 
-/** True when the active provider has all required fields filled in. */
+/* Check that the active provider has every mandatory field populated */
 export const isProviderConfigured = (): boolean => {
   return getActiveProviderConfig() !== null;
 };
 
-/** Wipe saved settings (resets to defaults on next load). */
+/* Remove all persisted settings; next load returns defaults */
 export const clearSettings = (): void => {
   localStorage.removeItem(STORAGE_KEY);
 };
 
-/** Human-readable label for a provider. */
+/* Map a provider key to its display label */
 export const getProviderDisplayName = (provider: LLMProvider): string => {
   switch (provider) {
     case 'openai':
@@ -412,13 +412,13 @@ export const getProviderDisplayName = (provider: LLMProvider): string => {
   }
 };
 
-/** Static list of well-known models for a provider. */
+/* Return a curated list of commonly used models for a given provider */
 export const getAvailableModels = (provider: LLMProvider): string[] => {
   switch (provider) {
     case 'openai':
       return ['gpt-4o', 'gpt-4.5-preview', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-4', 'gpt-3.5-turbo'];
     case 'azure-openai':
-      // Azure model names depend on deployment — listing common ones
+      /* Azure names follow the deployment; listing popular choices */
       return ['gpt-4o', 'gpt-4-turbo', 'gpt-4o-mini', 'gpt-4', 'gpt-35-turbo'];
     case 'gemini':
       return ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-1.0-pro'];
@@ -442,7 +442,7 @@ export const getAvailableModels = (provider: LLMProvider): string[] => {
   }
 };
 
-/** Pull the live model catalogue from OpenRouter's API. */
+/* Fetch the current model catalogue from OpenRouter */
 export const fetchOpenRouterModels = async (): Promise<Array<{ id: string; name: string }>> => {
   try {
     const response = await fetch('https://openrouter.ai/api/v1/models');
@@ -458,7 +458,7 @@ export const fetchOpenRouterModels = async (): Promise<Array<{ id: string; name:
   }
 };
 
-/** Pull the live model catalogue from Groq's API. */
+/* Fetch the current model catalogue from Groq */
 export const fetchGroqModels = async (apiKey?: string): Promise<Array<{ id: string; name: string }>> => {
   if (!apiKey || apiKey.trim() === '') return [];
   try {

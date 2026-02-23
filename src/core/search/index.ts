@@ -1,5 +1,4 @@
-/* Search module -- BM25 keyword and hybrid retrieval */
-
+/* Barrel — retrieval subsystem (keyword + hybrid) */
 export {
   buildBM25Index,
   searchBM25,

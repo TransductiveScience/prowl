@@ -1,58 +1,54 @@
 import { GraphNode, GraphRelationship, CodeGraph } from './types'
 
-/* Factory for a deduplicated in-memory code graph */
-export const createCodeGraph = (): CodeGraph => {
-  const vertexStore: Record<string, GraphNode> = Object.create(null);
-  const edgeStore: Record<string, GraphRelationship> = Object.create(null);
-  let vertexCount = 0;
-  let edgeCount = 0;
+/* Builds a deduplicated node/relationship store backed by plain objects */
+export function createCodeGraph(): CodeGraph {
+  const nodeMap: Record<string, GraphNode> = Object.create(null);
+  const relMap: Record<string, GraphRelationship> = Object.create(null);
+  let nCount = 0;
+  let rCount = 0;
 
-  const insertNode = (node: GraphNode): void => {
-    if (vertexStore[node.id] !== undefined) return;
-    vertexStore[node.id] = node;
-    vertexCount += 1;
-  };
+  function putNode(node: GraphNode): void {
+    if (nodeMap[node.id] !== undefined) return;
+    nodeMap[node.id] = node;
+    nCount += 1;
+  }
 
-  const insertRelationship = (rel: GraphRelationship): void => {
-    if (edgeStore[rel.id] !== undefined) return;
-    edgeStore[rel.id] = rel;
-    edgeCount += 1;
-  };
+  function putRel(rel: GraphRelationship): void {
+    if (relMap[rel.id] !== undefined) return;
+    relMap[rel.id] = rel;
+    rCount += 1;
+  }
 
-  const collectNodes = (): GraphNode[] => {
-    const result: GraphNode[] = [];
-    for (const key in vertexStore) {
-      result.push(vertexStore[key]);
-    }
-    return result;
-  };
+  function allNodes(): GraphNode[] {
+    const buf: GraphNode[] = [];
+    for (const k in nodeMap) buf.push(nodeMap[k]);
+    return buf;
+  }
 
-  const collectRelationships = (): GraphRelationship[] => {
-    const result: GraphRelationship[] = [];
-    for (const key in edgeStore) {
-      result.push(edgeStore[key]);
-    }
-    return result;
-  };
+  function allRels(): GraphRelationship[] {
+    const buf: GraphRelationship[] = [];
+    for (const k in relMap) buf.push(relMap[k]);
+    return buf;
+  }
 
   return {
     get nodes() {
-      return collectNodes();
+      return allNodes();
     },
 
     get relationships() {
-      return collectRelationships();
+      return allRels();
     },
 
     get nodeCount() {
-      return vertexCount;
+      return nCount;
     },
 
     get relationshipCount() {
-      return edgeCount;
+      return rCount;
     },
 
-    addNode: insertNode,
-    addRelationship: insertRelationship,
+    addNode: putNode,
+    addRelationship: putRel,
   };
-};
+}

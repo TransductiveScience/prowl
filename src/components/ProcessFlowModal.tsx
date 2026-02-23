@@ -1,8 +1,6 @@
 /**
- * Process Flow Modal — Prowl
- *
- * Single processes: native glass pill chain (no Mermaid).
- * Combined map: restyled Mermaid with Prowl dark monochrome theme.
+ * Displays a process flow as either a native pill chain (single processes)
+ * or a pan-and-zoom Mermaid diagram (combined / fullscreen views).
  */
 
 import { useEffect, useRef, useCallback, useState } from 'react';
@@ -16,6 +14,8 @@ interface ProcessFlowModalProps {
   onFocusInGraph?: (nodeIds: string[], processId: string) => void;
   isFullScreen?: boolean;
 }
+
+/* ── Mermaid dark monochrome theme ──────────────────── */
 
 mermaid.initialize({
   startOnLoad: false,
@@ -47,7 +47,9 @@ mermaid.initialize({
 
 mermaid.parseError = () => {};
 
-const StepPill = ({ step, index, isFirst, isLast }: {
+/* ── Step pill for single-process view ──────────────── */
+
+const FlowStep = ({ step, index, isFirst, isLast }: {
   step: { id: string; name: string; filePath?: string; stepNumber: number };
   index: number;
   isFirst: boolean;
@@ -85,71 +87,72 @@ const StepPill = ({ step, index, isFirst, isLast }: {
   );
 };
 
+/* ── Modal component ────────────────────────────────── */
+
 export const ProcessFlowModal = ({ process, onClose, onFocusInGraph, isFullScreen = false }: ProcessFlowModalProps) => {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const backdropRef = useRef<HTMLDivElement>(null);
   const diagramRef = useRef<HTMLDivElement>(null);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
 
-  const isCombined = isFullScreen || process?.id === 'combined-all';
-  const isRawMermaid = !!(process as any)?.rawMermaid;
-  const useMermaid = isCombined || isRawMermaid;
+  const fullView = isFullScreen || process?.id === 'combined-all';
+  const hasRawCode = !!(process as any)?.rawMermaid;
+  const renderAsMermaid = fullView || hasRawCode;
 
-  // Zoom state (only for Mermaid/combined view)
-  const defaultZoom = isCombined ? 6.67 : 1;
-  const maxZoom = isCombined ? 30 : 10;
-  const [zoom, setZoom] = useState(defaultZoom);
+  const initialZoom = fullView ? 6.67 : 1;
+  const maxZoom = fullView ? 30 : 10;
+  const [zoom, setZoom] = useState(initialZoom);
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [isPanning, setIsPanning] = useState(false);
-  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+  const [dragOrigin, setDragOrigin] = useState({ x: 0, y: 0 });
 
   useEffect(() => {
-    setZoom(defaultZoom);
+    setZoom(initialZoom);
     setPan({ x: 0, y: 0 });
-  }, [isFullScreen, defaultZoom]);
+  }, [isFullScreen, initialZoom]);
 
   useEffect(() => {
-    if (!useMermaid) return;
+    if (!renderAsMermaid) return;
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
       setZoom(prev => Math.min(Math.max(0.1, prev + e.deltaY * -0.001), maxZoom));
     };
-    const el = scrollContainerRef.current;
+    const el = viewportRef.current;
     if (el) {
       el.addEventListener('wheel', handleWheel, { passive: false });
       return () => el.removeEventListener('wheel', handleWheel);
     }
-  }, [process, maxZoom, useMermaid]);
+  }, [process, maxZoom, renderAsMermaid]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (!useMermaid) return;
-    setIsPanning(true);
-    setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
-  }, [pan, useMermaid]);
+    if (!renderAsMermaid) return;
+    setDragging(true);
+    setDragOrigin({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+  }, [pan, renderAsMermaid]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (!isPanning) return;
-    setPan({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
-  }, [isPanning, panStart]);
+    if (!dragging) return;
+    setPan({ x: e.clientX - dragOrigin.x, y: e.clientY - dragOrigin.y });
+  }, [dragging, dragOrigin]);
 
-  const handleMouseUp = useCallback(() => setIsPanning(false), []);
+  const handleMouseUp = useCallback(() => setDragging(false), []);
 
   useEffect(() => {
-    if (!process || !useMermaid || !diagramRef.current) return;
+    if (!process || !renderAsMermaid || !diagramRef.current) return;
 
-    const render = async () => {
+    const paint = async () => {
       try {
-        const code = isRawMermaid ? (process as any).rawMermaid : generateProcessMermaid(process);
+        const code = hasRawCode ? (process as any).rawMermaid : generateProcessMermaid(process);
         const id = `mermaid-${Date.now()}`;
         diagramRef.current!.innerHTML = '';
         const { svg } = await mermaid.render(id, code);
         diagramRef.current!.innerHTML = svg;
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
-        const isSize = msg.includes('Maximum') || msg.includes('exceeded');
+        const tooBig = msg.includes('Maximum') || msg.includes('exceeded');
         diagramRef.current!.innerHTML = `
           <div class="text-center p-8">
-            <div class="text-[13px] text-text-muted mb-1">${isSize ? 'Diagram too large' : 'Render error'}</div>
-            <div class="text-[11px] text-text-muted/40">${isSize
+            <div class="text-[13px] text-text-muted mb-1">${tooBig ? 'Diagram too large' : 'Render error'}</div>
+            <div class="text-[11px] text-text-muted/40">${tooBig
               ? `${process.steps?.length || 0} steps — try viewing individual processes`
               : `Steps: ${process.steps?.length || 0}`
             }</div>
@@ -158,8 +161,8 @@ export const ProcessFlowModal = ({ process, onClose, onFocusInGraph, isFullScree
       }
     };
 
-    render();
-  }, [process, useMermaid, isRawMermaid]);
+    paint();
+  }, [process, renderAsMermaid, hasRawCode]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -167,19 +170,17 @@ export const ProcessFlowModal = ({ process, onClose, onFocusInGraph, isFullScree
     return () => window.removeEventListener('keydown', handler);
   }, [onClose]);
 
-  const handleBackdropClick = useCallback((e: React.MouseEvent) => {
-    if (e.target === containerRef.current) onClose();
+  const onBackdropHit = useCallback((e: React.MouseEvent) => {
+    if (e.target === backdropRef.current) onClose();
   }, [onClose]);
 
-  // Copy mermaid
-  const handleCopyMermaid = useCallback(async () => {
+  const copyDiagramSource = useCallback(async () => {
     if (!process) return;
     const code = (process as any).rawMermaid || generateProcessMermaid(process);
     await navigator.clipboard.writeText(code);
   }, [process]);
 
-  // Focus in graph
-  const handleFocusInGraph = useCallback(() => {
+  const focusNodes = useCallback(() => {
     if (!process || !onFocusInGraph) return;
     onFocusInGraph(process.steps.map(s => s.id), process.id);
     onClose();
@@ -187,18 +188,18 @@ export const ProcessFlowModal = ({ process, onClose, onFocusInGraph, isFullScree
 
   if (!process) return null;
 
-  const sortedSteps = [...process.steps].sort((a, b) => a.stepNumber - b.stepNumber);
+  const orderedSteps = [...process.steps].sort((a, b) => a.stepNumber - b.stepNumber);
 
   return (
     <div
-      ref={containerRef}
+      ref={backdropRef}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-      onClick={handleBackdropClick}
+      onClick={onBackdropHit}
     >
       <div className={`
         relative bg-[#1c1c1e]/95 backdrop-blur-2xl border border-white/[0.06] rounded-xl shadow-2xl
         flex flex-col overflow-hidden
-        ${isCombined ? 'w-[95vw] h-[90vh] max-w-none' : 'w-full max-w-[680px] mx-4 max-h-[85vh]'}
+        ${fullView ? 'w-[95vw] h-[90vh] max-w-none' : 'w-full max-w-[680px] mx-4 max-h-[85vh]'}
       `}>
 
         <div className="flex items-center justify-between px-5 py-3 border-b border-white/[0.06] flex-shrink-0">
@@ -210,15 +211,15 @@ export const ProcessFlowModal = ({ process, onClose, onFocusInGraph, isFullScree
           </button>
         </div>
 
-        {useMermaid ? (
+        {renderAsMermaid ? (
           <div
-            ref={scrollContainerRef}
-            className={`flex-1 flex items-center justify-center overflow-hidden ${isCombined ? 'min-h-[70vh]' : 'min-h-[400px]'}`}
+            ref={viewportRef}
+            className={`flex-1 flex items-center justify-center overflow-hidden ${fullView ? 'min-h-[70vh]' : 'min-h-[400px]'}`}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
-            style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
+            style={{ cursor: dragging ? 'grabbing' : 'grab' }}
           >
             <div
               ref={diagramRef}
@@ -229,13 +230,13 @@ export const ProcessFlowModal = ({ process, onClose, onFocusInGraph, isFullScree
         ) : (
           <div className="flex-1 overflow-y-auto scrollbar-thin">
             <div className="flex flex-col items-center py-8 px-4">
-              {sortedSteps.map((step, i) => (
-                <StepPill
+              {orderedSteps.map((step, i) => (
+                <FlowStep
                   key={step.id}
                   step={step}
                   index={i}
                   isFirst={i === 0}
-                  isLast={i === sortedSteps.length - 1}
+                  isLast={i === orderedSteps.length - 1}
                 />
               ))}
             </div>
@@ -244,7 +245,7 @@ export const ProcessFlowModal = ({ process, onClose, onFocusInGraph, isFullScree
 
         <div className="flex items-center justify-between px-5 py-3 border-t border-white/[0.06] flex-shrink-0">
           <div className="flex items-center gap-2">
-            {useMermaid && (
+            {renderAsMermaid && (
               <div className="flex items-center gap-1 mr-2">
                 <button onClick={() => setZoom(prev => Math.max(prev - 0.25, 0.1))}
                   className="p-1 text-text-muted/40 hover:text-text-muted transition-colors">
@@ -260,7 +261,7 @@ export const ProcessFlowModal = ({ process, onClose, onFocusInGraph, isFullScree
               </div>
             )}
             <button
-              onClick={handleCopyMermaid}
+              onClick={copyDiagramSource}
               className="flex items-center gap-1 px-2 py-1 text-[11px] text-text-muted hover:text-text-primary transition-colors"
             >
               <Copy className="w-3 h-3" />
@@ -271,7 +272,7 @@ export const ProcessFlowModal = ({ process, onClose, onFocusInGraph, isFullScree
           <div className="flex items-center gap-2">
             {onFocusInGraph && (
               <button
-                onClick={handleFocusInGraph}
+                onClick={focusNodes}
                 className="flex items-center gap-1 px-3 py-1 text-[11px] text-accent hover:text-accent-dim transition-colors"
               >
                 <Focus className="w-3 h-3" />

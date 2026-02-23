@@ -1,6 +1,6 @@
 import { SupportedLanguages } from '../../config/supported-languages';
 
-// Dynamic import to handle web-tree-sitter's UMD/CommonJS export pattern
+/* Lazy loader — handles web-tree-sitter's CJS/UMD export shape */
 const loadTreeSitter = async () => {
     const module = await import('web-tree-sitter');
     return module.default || module;
@@ -11,21 +11,19 @@ type Language = any;
 
 let parser: Parser | null = null;
 
-// Compiled Language cache to avoid redundant fetches
+/* Language cache — prevents duplicate WASM fetches */
 const languageCache = new Map<string, Language>();
 
-/**
- * Resolve WASM paths for dev (Vite) and production (Electron file://) builds.
- * Uses string manipulation because Vite mis-transforms dynamic URL patterns.
- */
+/* Build an absolute WASM URL for both dev (Vite) and production (Electron file://).
+   Raw string ops are used because Vite garbles dynamic new URL() patterns. */
 function resolveWasmUrl(subPath: string): string {
     const moduleUrl = import.meta.url;
     if (moduleUrl.startsWith('file:')) {
-        // moduleUrl = file:///path/dist/renderer/assets/chunk-xxx.js
+        /* e.g. file:///app/dist/renderer/assets/chunk-xxx.js */
         const moduleDir = moduleUrl.substring(0, moduleUrl.lastIndexOf('/'));
-        // moduleDir = file:///path/dist/renderer/assets
+        /* → file:///app/dist/renderer/assets */
         const rendererDir = moduleDir.substring(0, moduleDir.lastIndexOf('/'));
-        // rendererDir = file:///path/dist/renderer
+        /* → file:///app/dist/renderer */
         return `${rendererDir}/wasm/${subPath}`;
     }
     return `/wasm/${subPath}`;
@@ -46,9 +44,9 @@ export const loadParser = async (): Promise<Parser> => {
     return parser;
 }
 
-// Map language + file extension to WASM grammar path
+/* Resolve a language enum (+ optional file extension) to its WASM grammar URL */
 const getWasmPath = (language: SupportedLanguages, filePath?: string): string => {
-    // TSX needs a separate grammar
+    /* TSX uses a dedicated grammar file */
     if (language === SupportedLanguages.TypeScript) {
         if (filePath?.endsWith('.tsx')) {
             return resolveWasmUrl('typescript/tree-sitter-tsx.wasm');
@@ -71,7 +69,7 @@ const getWasmPath = (language: SupportedLanguages, filePath?: string): string =>
     return resolveWasmUrl(languageFileMap[language]);
 };
 
-/** Load WASM via XHR (needed for Electron file:// where fetch() fails). */
+/* Download WASM bytes via XHR — required under Electron's file:// scheme where fetch() is unavailable */
 function loadWasmBytes(url: string): Promise<Uint8Array> {
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
@@ -104,7 +102,7 @@ export const loadLanguage = async (language: SupportedLanguages, filePath?: stri
     }
 
     try {
-        // Pre-load via XHR for file:// compatibility in Electron
+        /* Pre-fetch via XHR when running under file:// */
         const wasmInput: string | Uint8Array = wasmPath.startsWith('file:')
             ? await loadWasmBytes(wasmPath)
             : wasmPath;

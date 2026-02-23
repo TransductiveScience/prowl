@@ -95,7 +95,7 @@ export const QueryFAB = () => {
   const [presetsVisible, setPresetsVisible] = useState(false);
   const [tableVisible, setTableVisible] = useState(true);
 
-  // NL mode state
+  /* Natural-language mode state */
   const [mode, setMode] = useState<'nl' | 'cypher'>('nl');
   const [generatedCypher, setGeneratedCypher] = useState<string | null>(null);
   const [cypherVisible, setCypherVisible] = useState(false);
@@ -105,8 +105,8 @@ export const QueryFAB = () => {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
-  // ── Refs for stable callback access ──
-  // These mirror the latest state so executeQuery never has stale closures.
+  /* ── Refs for stable callback access ──
+     Mirror the latest state so executeQuery never reads stale closures. */
   const inputTextRef = useRef(inputText);
   inputTextRef.current = inputText;
 
@@ -119,7 +119,7 @@ export const QueryFAB = () => {
   const generatedCypherRef = useRef(generatedCypher);
   generatedCypherRef.current = generatedCypher;
 
-  // Check LLM availability on mount and when panel opens
+  /* Re-check LLM availability each time the panel opens */
   useEffect(() => {
     const config = getActiveProviderConfig();
     const available = config !== null;
@@ -154,22 +154,21 @@ export const QueryFAB = () => {
     return () => document.removeEventListener('keydown', onEsc);
   }, [panelOpen]);
 
-  // ── Run a Cypher string against the database ──
-  // Extracted so both executeQuery and pickPreset can call it.
-  // Reads nothing from closure — all values passed as arguments.
+  /* ── Execute a Cypher string against the graph DB ──
+     Shared by both executeQuery and pickPreset — takes no closure state. */
   const runCypher = useCallback(async (cypher: string) => {
     const t0 = performance.now();
     const rows = await runQuery(cypher);
     const elapsed = performance.now() - t0;
     const nodeIds = extractNodeIds(rows);
-    // flushSync required in Electron — automatic batching drops updates otherwise
+    /* flushSync needed under Electron — automatic batching swallows updates otherwise */
     flushSync(() => {
       setQueryResult({ rows, nodeIds, executionTime: elapsed });
       setHighlightedNodeIds(new Set(nodeIds));
     });
   }, [runQuery, setQueryResult, setHighlightedNodeIds]);
 
-  // ── Core execution — reads from refs, never stale ──
+  /* ── Primary execute handler — reads from refs to avoid stale closures ── */
   const executeQuery = useCallback(async () => {
     const trimmed = inputTextRef.current.trim();
     const currentMode = modeRef.current;
@@ -198,7 +197,7 @@ export const QueryFAB = () => {
         return;
       }
 
-      // ── NL mode: translate then execute ──
+      /* ── Natural-language path: translate to Cypher, then run ── */
       const config = getActiveProviderConfig();
       if (!config) {
         setErrorMsg('No AI model configured. Switch to Cypher mode or configure a model in Settings.');
@@ -253,12 +252,12 @@ export const QueryFAB = () => {
     const currentMode = modeRef.current;
 
     if (currentMode === 'nl') {
-      // NL mode: show title as input, use stored Cypher directly (skip LLM)
+      /* NL path: display the preset title while executing its Cypher directly */
       setInputText(preset.title);
       setGeneratedCypher(preset.cypher);
       setCypherVisible(true);
 
-      // Execute the preset Cypher directly
+      /* Fire the preset Cypher immediately */
       (async () => {
         const currentGraph = graphRef.current;
         if (!currentGraph) {
@@ -283,7 +282,7 @@ export const QueryFAB = () => {
         }
       })();
     } else {
-      // Cypher mode: insert raw Cypher into textarea
+      /* Cypher path: paste the raw query into the textarea */
       setInputText(preset.cypher);
       inputRef.current?.focus();
     }
@@ -293,7 +292,7 @@ export const QueryFAB = () => {
     const currentMode = modeRef.current;
     if (newMode === currentMode) return;
 
-    // If switching to Cypher after a failed NL translation, pre-fill with generated Cypher
+    /* Pre-fill the textarea with the generated Cypher when switching away from NL mode */
     if (newMode === 'cypher' && generatedCypherRef.current) {
       setInputText(generatedCypherRef.current);
     } else if (newMode === 'nl' && CYPHER_KEYWORDS.test(inputTextRef.current.trim())) {
@@ -370,7 +369,7 @@ export const QueryFAB = () => {
         </button>
       </div>
 
-      {/* Mode toggle */}
+      {/* Ask / Cypher mode switcher */}
       <div className="px-3 pt-3 pb-1">
         <div className="inline-flex rounded-md bg-surface border border-border-subtle p-0.5">
           <button
@@ -399,7 +398,7 @@ export const QueryFAB = () => {
         </div>
       </div>
 
-      {/* No-LLM banner */}
+      {/* Missing-model warning */}
       {!llmAvailable && (
         <div className="mx-3 mt-2 px-3 py-2 bg-amber-500/10 border border-amber-500/20 rounded-md flex items-center gap-2">
           <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
@@ -426,7 +425,7 @@ export const QueryFAB = () => {
           />
         </div>
 
-        {/* Generated Cypher collapsible */}
+        {/* Collapsible generated-Cypher preview */}
         {generatedCypher && mode === 'nl' && (
           <div className="mt-2 border border-border-subtle rounded-lg overflow-hidden">
             <button
@@ -492,7 +491,7 @@ export const QueryFAB = () => {
         </div>
       </div>
 
-      {/* Warning (amber) — e.g. CANNOT_TRANSLATE or non-Cypher response */}
+      {/* Amber warning — e.g. untranslatable question or unexpected response */}
       {warningMsg && (
         <div className="px-4 py-2 bg-amber-500/10 border-t border-amber-500/20 flex items-center gap-2">
           <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
@@ -500,7 +499,7 @@ export const QueryFAB = () => {
         </div>
       )}
 
-      {/* Error (red) — API failures, query execution errors */}
+      {/* Red error — API or query execution failures */}
       {errorMsg && (
         <div className="px-4 py-2 bg-red-500/10 border-t border-red-500/20">
           <p className="text-xs text-red-400 font-mono">{errorMsg}</p>

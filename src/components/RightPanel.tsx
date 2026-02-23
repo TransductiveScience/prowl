@@ -20,7 +20,7 @@ const ToolCallGroup = ({ steps }: { steps: { id: string; toolCall: any }[] }) =>
   const runningCount = steps.filter(s => s.toolCall?.status === 'running').length;
   const MAX_VISIBLE = 3;
 
-  // If few pills or still running, show them all
+  /* When the list is short or any step is still running, render every pill */
   if (steps.length <= MAX_VISIBLE || !allDone) {
     return (
       <div className="flex flex-wrap gap-1.5 mb-2 items-center">
@@ -36,7 +36,7 @@ const ToolCallGroup = ({ steps }: { steps: { id: string; toolCall: any }[] }) =>
     );
   }
 
-  // Many completed pills — collapse into summary
+  /* Large batch of finished pills — collapse behind an expandable summary */
   return (
     <div className="mb-2">
       <button
@@ -125,13 +125,13 @@ export const RightPanel = ({ onFocusNode }: RightPanelProps) => {
     const req = requestedPath.replace(/\\/g, '/').replace(/^\.?\//, '').toLowerCase();
     if (!req) return null;
 
-    // Exact match first (case-insensitive)
+    /* Try case-insensitive exact match first */
     for (const key of fileContents.keys()) {
       const norm = key.replace(/\\/g, '/').replace(/^\.?\//, '').toLowerCase();
       if (norm === req) return key;
     }
 
-    // Ends-with match (best for partial paths)
+    /* Fall back to suffix match — works well for partial path references */
     let best: { path: string; score: number } | null = null;
     for (const key of fileContents.keys()) {
       const norm = key.replace(/\\/g, '/').replace(/^\.?\//, '').toLowerCase();

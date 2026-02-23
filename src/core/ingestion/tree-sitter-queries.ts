@@ -1,8 +1,8 @@
 import { SupportedLanguages } from '../../config/supported-languages';
 
-// Tree-sitter S-expression queries per language grammar
+/* ── TypeScript / TSX ───────────────────────────────────── */
 
-export const TYPESCRIPT_QUERIES = `
+const tsQueries = `
 (class_declaration
   name: (type_identifier) @name) @definition.class
 
@@ -47,14 +47,14 @@ export const TYPESCRIPT_QUERIES = `
   function: (member_expression
     property: (property_identifier) @call.name)) @call
 
-; Inheritance: class extending another class
+; class-level inheritance
 (class_declaration
   name: (type_identifier) @heritage.class
   (class_heritage
     (extends_clause
       value: (identifier) @heritage.extends))) @heritage
 
-; Conformance: class implementing an interface
+; interface conformance via implements clause
 (class_declaration
   name: (type_identifier) @heritage.class
   (class_heritage
@@ -62,7 +62,9 @@ export const TYPESCRIPT_QUERIES = `
       (type_identifier) @heritage.implements))) @heritage.impl
 `;
 
-export const JAVASCRIPT_QUERIES = `
+/* ── JavaScript / JSX ───────────────────────────────────── */
+
+const jsQueries = `
 (class_declaration
   name: (identifier) @name) @definition.class
 
@@ -104,14 +106,16 @@ export const JAVASCRIPT_QUERIES = `
   function: (member_expression
     property: (property_identifier) @call.name)) @call
 
-; Inheritance: JS class hierarchy uses a flat AST with identifier child
+; JS class hierarchy (flat AST with identifier child)
 (class_declaration
   name: (identifier) @heritage.class
   (class_heritage
     (identifier) @heritage.extends)) @heritage
 `;
 
-export const PYTHON_QUERIES = `
+/* ── Python ─────────────────────────────────────────────── */
+
+const pyQueries = `
 (class_definition
   name: (identifier) @name) @definition.class
 
@@ -131,115 +135,125 @@ export const PYTHON_QUERIES = `
   function: (attribute
     attribute: (identifier) @call.name)) @call
 
-; Python class bases come through argument_list
+; base classes appear inside argument_list
 (class_definition
   name: (identifier) @heritage.class
   superclasses: (argument_list
     (identifier) @heritage.extends)) @heritage
 `;
 
-export const JAVA_QUERIES = `
-; Type declarations
+/* ── Java ───────────────────────────────────────────────── */
+
+const javaQueries = `
+; type-level declarations
 (class_declaration name: (identifier) @name) @definition.class
 (interface_declaration name: (identifier) @name) @definition.interface
 (enum_declaration name: (identifier) @name) @definition.enum
 (annotation_type_declaration name: (identifier) @name) @definition.annotation
 
-; Callable declarations
+; callable members
 (method_declaration name: (identifier) @name) @definition.method
 (constructor_declaration name: (identifier) @name) @definition.constructor
 
-; Import statements
+; dependency imports
 (import_declaration (_) @import.source) @import
 
-; Method invocations
+; invocations
 (method_invocation name: (identifier) @call.name) @call
 (method_invocation object: (_) name: (identifier) @call.name) @call
 
-; Class extending a superclass
+; superclass
 (class_declaration name: (identifier) @heritage.class
   (superclass (type_identifier) @heritage.extends)) @heritage
 
-; Class conforming to interfaces
+; implemented interfaces
 (class_declaration name: (identifier) @heritage.class
   (super_interfaces (type_list (type_identifier) @heritage.implements))) @heritage.impl
 `;
 
-export const C_QUERIES = `
-; Function definitions and forward declarations
+/* ── C ──────────────────────────────────────────────────── */
+
+const cQueries = `
+; functions (definitions + forward declarations)
 (function_definition declarator: (function_declarator declarator: (identifier) @name)) @definition.function
 (declaration declarator: (function_declarator declarator: (identifier) @name)) @definition.function
 
-; Aggregate and enumeration types
+; aggregate types
 (struct_specifier name: (type_identifier) @name) @definition.struct
 (union_specifier name: (type_identifier) @name) @definition.union
 (enum_specifier name: (type_identifier) @name) @definition.enum
 (type_definition declarator: (type_identifier) @name) @definition.typedef
 
-; Preprocessor definitions
+; preprocessor
 (preproc_function_def name: (identifier) @name) @definition.macro
 (preproc_def name: (identifier) @name) @definition.macro
 
-; Header includes
+; includes
 (preproc_include path: (_) @import.source) @import
 
-; Function calls
+; calls
 (call_expression function: (identifier) @call.name) @call
 (call_expression function: (field_expression field: (field_identifier) @call.name)) @call
 `;
 
-export const GO_QUERIES = `
-; Function and method declarations
+/* ── Go ─────────────────────────────────────────────────── */
+
+const goQueries = `
+; function / method
 (function_declaration name: (identifier) @name) @definition.function
 (method_declaration name: (field_identifier) @name) @definition.method
 
-; Type specifications
+; type specs
 (type_declaration (type_spec name: (type_identifier) @name type: (struct_type))) @definition.struct
 (type_declaration (type_spec name: (type_identifier) @name type: (interface_type))) @definition.interface
 (type_declaration (type_spec name: (type_identifier) @name)) @definition.type
 
-; Package imports
+; imports
 (import_declaration (import_spec path: (interpreted_string_literal) @import.source)) @import
 (import_declaration (import_spec_list (import_spec path: (interpreted_string_literal) @import.source))) @import
 
-; Invocations
+; calls
 (call_expression function: (identifier) @call.name) @call
 (call_expression function: (selector_expression field: (field_identifier) @call.name)) @call
 `;
 
-export const CPP_QUERIES = `
-; Type declarations
+/* ── C++ ────────────────────────────────────────────────── */
+
+const cppQueries = `
+; type declarations
 (class_specifier name: (type_identifier) @name) @definition.class
 (struct_specifier name: (type_identifier) @name) @definition.struct
 (namespace_definition name: (namespace_identifier) @name) @definition.namespace
 (enum_specifier name: (type_identifier) @name) @definition.enum
 
-; Free functions and class methods
+; free and qualified functions
 (function_definition declarator: (function_declarator declarator: (identifier) @name)) @definition.function
 (function_definition declarator: (function_declarator declarator: (qualified_identifier name: (identifier) @name))) @definition.method
 
-; Template declarations
+; templates wrapping classes or functions
 (template_declaration (class_specifier name: (type_identifier) @name)) @definition.template
 (template_declaration (function_definition declarator: (function_declarator declarator: (identifier) @name))) @definition.template
 
-; Header includes
+; includes
 (preproc_include path: (_) @import.source) @import
 
-; Invocations
+; calls (plain, member, qualified, template)
 (call_expression function: (identifier) @call.name) @call
 (call_expression function: (field_expression field: (field_identifier) @call.name)) @call
 (call_expression function: (qualified_identifier name: (identifier) @call.name)) @call
 (call_expression function: (template_function name: (identifier) @call.name)) @call
 
-; Base class relationships
+; base-class edges
 (class_specifier name: (type_identifier) @heritage.class
   (base_class_clause (type_identifier) @heritage.extends)) @heritage
 (class_specifier name: (type_identifier) @heritage.class
   (base_class_clause (access_specifier) (type_identifier) @heritage.extends)) @heritage
 `;
 
-export const CSHARP_QUERIES = `
-; Type declarations
+/* ── C# ─────────────────────────────────────────────────── */
+
+const csQueries = `
+; type declarations
 (class_declaration name: (identifier) @name) @definition.class
 (interface_declaration name: (identifier) @name) @definition.interface
 (struct_declaration name: (identifier) @name) @definition.struct
@@ -247,33 +261,35 @@ export const CSHARP_QUERIES = `
 (record_declaration name: (identifier) @name) @definition.record
 (delegate_declaration name: (identifier) @name) @definition.delegate
 
-; Namespace scoping
+; namespace scoping
 (namespace_declaration name: (identifier) @name) @definition.namespace
 (namespace_declaration name: (qualified_name) @name) @definition.namespace
 
-; Callable and property members
+; callable + property members
 (method_declaration name: (identifier) @name) @definition.method
 (local_function_statement name: (identifier) @name) @definition.function
 (constructor_declaration name: (identifier) @name) @definition.constructor
 (property_declaration name: (identifier) @name) @definition.property
 
-; Using directives
+; using directives
 (using_directive (qualified_name) @import.source) @import
 (using_directive (identifier) @import.source) @import
 
-; Invocations
+; invocations
 (invocation_expression function: (identifier) @call.name) @call
 (invocation_expression function: (member_access_expression name: (identifier) @call.name)) @call
 
-; Base type relationships
+; base-type edges
 (class_declaration name: (identifier) @heritage.class
   (base_list (simple_base_type (identifier) @heritage.extends))) @heritage
 (class_declaration name: (identifier) @heritage.class
   (base_list (simple_base_type (generic_name (identifier) @heritage.extends)))) @heritage
 `;
 
-export const RUST_QUERIES = `
-; Item definitions
+/* ── Rust ───────────────────────────────────────────────── */
+
+const rsQueries = `
+; item definitions
 (function_item name: (identifier) @name) @definition.function
 (struct_item name: (type_identifier) @name) @definition.struct
 (enum_item name: (type_identifier) @name) @definition.enum
@@ -281,35 +297,36 @@ export const RUST_QUERIES = `
 (impl_item type: (type_identifier) @name) @definition.impl
 (mod_item name: (identifier) @name) @definition.module
 
-; Named constants, statics, type aliases, macros
+; named constants, statics, type aliases, macros
 (type_item name: (type_identifier) @name) @definition.type
 (const_item name: (identifier) @name) @definition.const
 (static_item name: (identifier) @name) @definition.static
 (macro_definition name: (identifier) @name) @definition.macro
 
-; Use paths
+; use paths
 (use_declaration argument: (_) @import.source) @import
 
-; Invocations
+; calls (plain, field, scoped, generic)
 (call_expression function: (identifier) @call.name) @call
 (call_expression function: (field_expression field: (field_identifier) @call.name)) @call
 (call_expression function: (scoped_identifier name: (identifier) @call.name)) @call
 (call_expression function: (generic_function function: (identifier) @call.name)) @call
 
-; Trait implementations
+; trait impl relationships
 (impl_item trait: (type_identifier) @heritage.trait type: (type_identifier) @heritage.class) @heritage
 (impl_item trait: (generic_type type: (type_identifier) @heritage.trait) type: (type_identifier) @heritage.class) @heritage
 `;
 
-// Language to query dispatch table
+/* ── Dispatch table ─────────────────────────────────────── */
+
 export const LANGUAGE_QUERIES: Record<SupportedLanguages, string> = {
-  [SupportedLanguages.TypeScript]: TYPESCRIPT_QUERIES,
-  [SupportedLanguages.JavaScript]: JAVASCRIPT_QUERIES,
-  [SupportedLanguages.Python]: PYTHON_QUERIES,
-  [SupportedLanguages.Java]: JAVA_QUERIES,
-  [SupportedLanguages.C]: C_QUERIES,
-  [SupportedLanguages.Go]: GO_QUERIES,
-  [SupportedLanguages.CPlusPlus]: CPP_QUERIES,
-  [SupportedLanguages.CSharp]: CSHARP_QUERIES,
-  [SupportedLanguages.Rust]: RUST_QUERIES,
+  [SupportedLanguages.TypeScript]: tsQueries,
+  [SupportedLanguages.JavaScript]: jsQueries,
+  [SupportedLanguages.Python]: pyQueries,
+  [SupportedLanguages.Java]: javaQueries,
+  [SupportedLanguages.C]: cQueries,
+  [SupportedLanguages.Go]: goQueries,
+  [SupportedLanguages.CPlusPlus]: cppQueries,
+  [SupportedLanguages.CSharp]: csQueries,
+  [SupportedLanguages.Rust]: rsQueries,
 };

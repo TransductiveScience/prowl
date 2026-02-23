@@ -16,20 +16,20 @@ export const WebGPUFallbackDialog = ({
   onSkip,
   nodeCount,
 }: WebGPUFallbackDialogProps) => {
-  const [isVisible, setIsVisible] = useState(false);
+  const [revealed, setRevealed] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
-      requestAnimationFrame(() => setIsVisible(true));
+      requestAnimationFrame(() => setRevealed(true));
     } else {
-      setIsVisible(false);
+      setRevealed(false);
     }
   }, [isOpen]);
 
   if (!isOpen) return null;
 
-  const estimatedMinutes = Math.ceil((nodeCount * 50) / 60000);
-  const isSmallCodebase = nodeCount < 200;
+  const cpuMinutes = Math.ceil((nodeCount * 50) / 60000);
+  const compactProject = nodeCount < 200;
 
   return (
     <div
@@ -37,7 +37,7 @@ export const WebGPUFallbackDialog = ({
     >
       <div
         className={`pointer-events-auto w-full max-w-lg mx-4 mb-4 bg-surface border border-border-subtle rounded-xl shadow-2xl overflow-hidden transition-all duration-300 ease-out ${
-          isVisible
+          revealed
             ? 'opacity-100 translate-y-0'
             : 'opacity-0 translate-y-full'
         }`}
@@ -51,7 +51,7 @@ export const WebGPUFallbackDialog = ({
             </h2>
             <p className="text-xs text-text-muted mt-0.5">
               Your browser doesn&apos;t support GPU acceleration.
-              Semantic search (Graph RAG) won&apos;t be as smart, but the graph still works fine.
+              Vector search won&apos;t be as fast, but the graph still works fine.
             </p>
           </div>
           <button
@@ -69,9 +69,9 @@ export const WebGPUFallbackDialog = ({
               <li className="flex items-start gap-2">
                 <Snail className="w-4 h-4 mt-0.5 text-amber-400 flex-shrink-0" />
                 <span>
-                  <strong className="text-text-secondary">Use CPU</strong> — Works but {isSmallCodebase ? 'a bit' : 'way'} slower
+                  <strong className="text-text-secondary">Use CPU</strong> — Works but {compactProject ? 'a bit' : 'way'} slower
                   {nodeCount > 0 && (
-                    <span className="text-text-muted"> (~{estimatedMinutes} min for {nodeCount} nodes)</span>
+                    <span className="text-text-muted"> (~{cpuMinutes} min for {nodeCount} nodes)</span>
                   )}
                 </span>
               </li>
@@ -84,7 +84,7 @@ export const WebGPUFallbackDialog = ({
             </ul>
           </div>
 
-          {isSmallCodebase && (
+          {compactProject && (
             <p className="text-xs text-node-function flex items-center gap-1.5 bg-node-function/10 px-3 py-2 rounded-lg">
               <Rocket className="w-3.5 h-3.5" />
               Small codebase detected! CPU should be fine.
@@ -107,13 +107,13 @@ export const WebGPUFallbackDialog = ({
           <button
             onClick={onUseCPU}
             className={`flex-1 px-4 py-2 text-sm font-medium rounded-lg transition-all flex items-center justify-center gap-2 ${
-              isSmallCodebase
+              compactProject
                 ? 'bg-node-function text-white hover:bg-node-function/90'
                 : 'bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30'
             }`}
           >
             <Snail className="w-4 h-4" />
-            Use CPU {isSmallCodebase ? '(Recommended)' : '(Slow)'}
+            Use CPU {compactProject ? '(Recommended)' : '(Slow)'}
           </button>
         </div>
       </div>

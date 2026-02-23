@@ -1,5 +1,4 @@
-/* Vector embedding public API */
-
+/* Barrel — vector embedding subsystem */
 export * from './types';
 export * from './embedder';
 export * from './text-generator';

@@ -1,49 +1,55 @@
-import { LRUCache } from 'lru-cache';
 import Parser from 'web-tree-sitter';
 
-/* AST tree cache contract */
+/**
+ * Bounded cache for parsed AST trees.
+ *
+ * Evicts the oldest entry once the ceiling is hit,
+ * calling `tree.delete()` to release WASM heap memory.
+ */
 export interface ASTCache {
-  get: (filePath: string) => Parser.Tree | undefined;
-  set: (filePath: string, tree: Parser.Tree) => void;
-  clear: () => void;
-  stats: () => { size: number; maxSize: number };
+  get(path: string): Parser.Tree | undefined;
+  set(path: string, tree: Parser.Tree): void;
+  clear(): void;
+  stats(): { size: number; ceiling: number };
 }
 
-/* LRU cache that releases WASM tree memory on eviction */
-export const createASTCache = (maxSize: number = 50): ASTCache => {
-  const capacity = maxSize;
+export function createASTCache(ceiling = 50): ASTCache {
+  const entries = new Map<string, Parser.Tree>();
 
-  const treeStore = new LRUCache<string, Parser.Tree>({
-    max: capacity,
-    dispose: (evictedTree: Parser.Tree) => {
-      try {
-        evictedTree.delete();
-      } catch (_err) {
-        console.warn('Unable to release WASM tree memory', _err);
-      }
-    },
-  });
+  function evictOldest(): void {
+    const oldest = entries.keys().next().value;
+    if (oldest === undefined) return;
+    const stale = entries.get(oldest);
+    entries.delete(oldest);
+    try { stale?.delete(); } catch { /* tree already freed */ }
+  }
 
-  const retrieve = (filePath: string): Parser.Tree | undefined =>
-    treeStore.get(filePath);
-
-  const store = (filePath: string, tree: Parser.Tree): void => {
-    treeStore.set(filePath, tree);
-  };
-
-  const purge = (): void => {
-    treeStore.clear();
-  };
-
-  const info = (): { size: number; maxSize: number } => ({
-    size: treeStore.size,
-    maxSize: capacity,
-  });
+  function safeRelease(tree: Parser.Tree): void {
+    try { tree.delete(); } catch { /* already freed */ }
+  }
 
   return {
-    get: retrieve,
-    set: store,
-    clear: purge,
-    stats: info,
+    get(path) {
+      return entries.get(path);
+    },
+
+    set(path, tree) {
+      if (entries.has(path)) {
+        const prev = entries.get(path)!;
+        entries.delete(path);
+        safeRelease(prev);
+      }
+      if (entries.size >= ceiling) evictOldest();
+      entries.set(path, tree);
+    },
+
+    clear() {
+      for (const t of entries.values()) safeRelease(t);
+      entries.clear();
+    },
+
+    stats() {
+      return { size: entries.size, ceiling };
+    },
   };
-};
+}

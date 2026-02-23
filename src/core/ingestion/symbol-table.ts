@@ -1,73 +1,90 @@
-export interface SymbolDefinition {
+/**
+ * Tracks where every named symbol is declared so that
+ * call-resolution and import-linking can look them up
+ * by file (precise) or project-wide (approximate).
+ */
+
+export interface SymbolRecord {
   nodeId: string;
   filePath: string;
-  type: string;
+  kind: string;
 }
+
+export type SymbolDefinition = SymbolRecord;
 
 export interface SymbolTable {
-  /** Register a symbol definition. */
-  add: (filePath: string, name: string, nodeId: string, type: string) => void;
-
-  /** Exact file-scoped lookup. Returns node ID or undefined. */
-  lookupExact: (filePath: string, name: string) => string | undefined;
-
-  /** Project-wide fuzzy lookup (lower confidence). */
-  lookupFuzzy: (name: string) => SymbolDefinition[];
-
-  /** Debug stats: tracked file and symbol counts. */
-  getStats: () => { fileCount: number; globalSymbolCount: number };
-
-  /** Release all entries. */
-  clear: () => void;
+  register(filePath: string, name: string, nodeId: string, kind: string): void;
+  resolve(filePath: string, name: string): string | undefined;
+  scan(name: string): SymbolRecord[];
+  metrics(): { files: number; symbols: number };
+  reset(): void;
+  /* Aliases kept for downstream consumers until they are refactored */
+  add: SymbolTable['register'];
+  lookupExact: SymbolTable['resolve'];
+  lookupFuzzy: SymbolTable['scan'];
+  getStats(): { fileCount: number; globalSymbolCount: number };
+  clear: SymbolTable['reset'];
 }
 
-/* Dual-index symbol table: per-file exact and project-wide fuzzy lookups */
-export const createSymbolTable = (): SymbolTable => {
-  /* Per-file entries: "filePath::symbolName" -> nodeId */
-  const perFileEntries = new Map<string, string>();
+export function createSymbolTable(): SymbolTable {
+  /* Precise index — keyed by "file\0name" for zero-collision scoped lookup */
+  const scoped = new Map<string, string>();
 
-  /* Tracked file paths */
-  const knownFiles = new Set<string>();
+  /* Broad index — every name that has been registered, regardless of origin */
+  const broad = new Map<string, SymbolRecord[]>();
 
-  /* Reverse index: name -> definitions across all files */
-  const reverseIndex = new Map<string, SymbolDefinition[]>();
+  /* Track distinct source files */
+  const origins = new Set<string>();
 
-  const composeKey = (fp: string, sym: string): string =>
-    `${fp}::${sym}`;
+  function scopeKey(fp: string, sym: string): string {
+    return `${fp}\0${sym}`;
+  }
 
-  const add = (filePath: string, name: string, nodeId: string, type: string): void => {
-    knownFiles.add(filePath);
+  return {
+    register(filePath, name, nodeId, kind) {
+      origins.add(filePath);
+      scoped.set(scopeKey(filePath, name), nodeId);
 
-    const compositeKey = composeKey(filePath, name);
-    perFileEntries.set(compositeKey, nodeId);
+      const rec: SymbolRecord = { nodeId, filePath, kind };
+      const list = broad.get(name);
+      if (list) list.push(rec);
+      else broad.set(name, [rec]);
+    },
 
-    const entry: SymbolDefinition = { nodeId, filePath, type };
-    const existing = reverseIndex.get(name);
-    if (existing === undefined) {
-      reverseIndex.set(name, [entry]);
-    } else {
-      existing.push(entry);
-    }
+    resolve(filePath, name) {
+      return scoped.get(scopeKey(filePath, name));
+    },
+
+    scan(name) {
+      return broad.get(name) ?? [];
+    },
+
+    metrics() {
+      return { files: origins.size, symbols: broad.size };
+    },
+
+    reset() {
+      scoped.clear();
+      broad.clear();
+      origins.clear();
+    },
+
+    /* backward-compat aliases */
+    add(filePath: string, name: string, nodeId: string, kind: string) {
+      this.register(filePath, name, nodeId, kind);
+    },
+    lookupExact(filePath: string, name: string) {
+      return this.resolve(filePath, name);
+    },
+    lookupFuzzy(name: string) {
+      return this.scan(name);
+    },
+    getStats() {
+      const m = this.metrics();
+      return { fileCount: m.files, globalSymbolCount: m.symbols };
+    },
+    clear() {
+      this.reset();
+    },
   };
-
-  const lookupExact = (filePath: string, name: string): string | undefined => {
-    const compositeKey = composeKey(filePath, name);
-    return perFileEntries.get(compositeKey);
-  };
-
-  const lookupFuzzy = (name: string): SymbolDefinition[] =>
-    reverseIndex.get(name) ?? [];
-
-  const getStats = (): { fileCount: number; globalSymbolCount: number } => ({
-    fileCount: knownFiles.size,
-    globalSymbolCount: reverseIndex.size,
-  });
-
-  const clear = (): void => {
-    perFileEntries.clear();
-    knownFiles.clear();
-    reverseIndex.clear();
-  };
-
-  return { add, lookupExact, lookupFuzzy, getStats, clear };
-};
+}

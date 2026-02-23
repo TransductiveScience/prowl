@@ -1,128 +1,134 @@
 /**
- * Reciprocal Rank Fusion (RRF) merging of BM25 and semantic results.
- * Relies on rank positions rather than raw scores, giving stable
- * fusion across different scoring scales.
+ * Reciprocal Rank Fusion (RRF) combiner for BM25 and vector search.
+ * Uses rank positions instead of raw scores so the two retrieval
+ * pipelines stay comparable regardless of their scoring scales.
  */
 
 import { searchBM25, isBM25Ready, type BM25SearchResult } from './bm25-index';
 import type { SemanticSearchResult } from '../embeddings/types';
 
-/** RRF smoothing constant (k=60) */
-const FUSION_K = 60;
+/* ── Constants ───────────────────────────────────────── */
+
+/* Standard RRF smoothing parameter */
+const RRF_CONSTANT = 60;
+
+/* ── Result shape ────────────────────────────────────── */
 
 export interface SearchHit {
   filePath: string;
-  score: number;           // RRF score
-  rank: number;            // Final rank
-  sources: ('bm25' | 'semantic')[];  // Which methods found this
+  score: number;
+  rank: number;
+  sources: ('bm25' | 'semantic')[];
 
-  // Metadata from semantic search (if available)
   nodeId?: string;
   name?: string;
   label?: string;
   startLine?: number;
   endLine?: number;
 
-  // Per-source scores for diagnostics
   bm25Score?: number;
   semanticScore?: number;
 }
 
-/** RRF weight for a 0-based rank position. */
-const rrfWeight = (position: number): number => 1 / (FUSION_K + position + 1);
+/* ── Internals ───────────────────────────────────────── */
 
-/** Copy semantic metadata onto a result entry. */
-const applySemantic = (
-  entry: SearchHit,
-  src: SemanticSearchResult
-): void => {
-  entry.nodeId = src.nodeId;
-  entry.name = src.name;
-  entry.label = src.label;
-  entry.startLine = src.startLine;
-  entry.endLine = src.endLine;
-};
+/* Compute the RRF contribution for a zero-based position */
+function reciprocalRank(position: number): number {
+  return 1 / (RRF_CONSTANT + position + 1);
+}
 
-/** Fuse BM25 and semantic results via RRF and return ranked hits. */
-export const mergeWithRRF = (
+/* Transfer semantic metadata fields onto a merged hit */
+function attachSemanticMeta(
+  dest: SearchHit,
+  src: SemanticSearchResult,
+): void {
+  dest.nodeId = src.nodeId;
+  dest.name = src.name;
+  dest.label = src.label;
+  dest.startLine = src.startLine;
+  dest.endLine = src.endLine;
+}
+
+/* ── Public API ──────────────────────────────────────── */
+
+/* Combine BM25 and semantic results via RRF into a ranked list */
+export function mergeWithRRF(
   bm25Results: BM25SearchResult[],
   semanticResults: SemanticSearchResult[],
-  limit: number = 10
-): SearchHit[] => {
-  const registry = new Map<string, SearchHit>();
+  limit: number = 10,
+): SearchHit[] {
+  const accumulator = new Map<string, SearchHit>();
 
-  // Accumulate BM25 hits
-  bm25Results.forEach((hit, pos) => {
-    registry.set(hit.filePath, {
+  for (let i = 0; i < bm25Results.length; i++) {
+    const hit = bm25Results[i];
+    accumulator.set(hit.filePath, {
       filePath: hit.filePath,
-      score: rrfWeight(pos),
+      score: reciprocalRank(i),
       rank: 0,
       sources: ['bm25'],
       bm25Score: hit.score,
     });
-  });
+  }
 
-  // Merge semantic hits, combining scores when paths overlap
-  semanticResults.forEach((hit, pos) => {
-    const weight = rrfWeight(pos);
-    const prev = registry.get(hit.filePath);
+  for (let i = 0; i < semanticResults.length; i++) {
+    const hit = semanticResults[i];
+    const w = reciprocalRank(i);
+    const existing = accumulator.get(hit.filePath);
 
-    if (prev !== undefined) {
-      prev.score += weight;
-      prev.sources.push('semantic');
-      prev.semanticScore = 1 - hit.distance;
-      applySemantic(prev, hit);
+    if (existing !== undefined) {
+      existing.score += w;
+      existing.sources.push('semantic');
+      existing.semanticScore = 1 - hit.distance;
+      attachSemanticMeta(existing, hit);
     } else {
-      const entry: SearchHit = {
+      const fresh: SearchHit = {
         filePath: hit.filePath,
-        score: weight,
+        score: w,
         rank: 0,
         sources: ['semantic'],
         semanticScore: 1 - hit.distance,
       };
-      applySemantic(entry, hit);
-      registry.set(hit.filePath, entry);
+      attachSemanticMeta(fresh, hit);
+      accumulator.set(hit.filePath, fresh);
     }
-  });
+  }
 
-  // Sort by RRF score descending, cap at limit
-  const ranked = [...registry.values()]
+  const ranked = [...accumulator.values()]
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);
 
-  let position = 1;
-  ranked.forEach((entry) => {
-    entry.rank = position;
-    position++;
-  });
+  for (let pos = 0; pos < ranked.length; pos++) {
+    ranked[pos].rank = pos + 1;
+  }
 
   return ranked;
-};
+}
 
-/** True when the BM25 index is built (semantic is optional). */
-export const isHybridSearchReady = (): boolean => {
+/* Whether at least the keyword index is available */
+export function isHybridSearchReady(): boolean {
   return isBM25Ready();
-};
+}
 
-/** Format search hits as a text block for LLM consumption. */
-export const formatHybridResults = (results: SearchHit[]): string => {
+/* Render search hits as a readable text block for LLM context */
+export function formatHybridResults(results: SearchHit[]): string {
   if (results.length === 0) return 'No results found.';
 
-  const blocks: string[] = [];
+  const parts: string[] = [];
 
-  results.forEach((entry, idx) => {
+  for (let idx = 0; idx < results.length; idx++) {
+    const entry = results[idx];
     const methodStr = entry.sources.join(' + ');
     const locSuffix = entry.startLine ? ` (lines ${entry.startLine}-${entry.endLine})` : '';
     const prefix = entry.label ? `${entry.label}: ` : 'File: ';
     const displayName = entry.name || entry.filePath.split('/').pop() || entry.filePath;
 
-    blocks.push(
+    parts.push(
       `[${idx + 1}] ${prefix}${displayName}\n` +
       `    File: ${entry.filePath}${locSuffix}\n` +
       `    Found by: ${methodStr}\n` +
-      `    Relevance: ${entry.score.toFixed(4)}`
+      `    Relevance: ${entry.score.toFixed(4)}`,
     );
-  });
+  }
 
-  return `Found ${results.length} results:\n\n${blocks.join('\n\n')}`;
-};
+  return `Found ${results.length} results:\n\n${parts.join('\n\n')}`;
+}

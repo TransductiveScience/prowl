@@ -4,6 +4,8 @@ import { AlertTriangle, Maximize2 } from 'lucide-react';
 import { ProcessFlowModal } from './ProcessFlowModal';
 import type { ProcessData } from '../lib/mermaid-generator';
 
+/* ── Mermaid global config ──────────────────────────── */
+
 mermaid.initialize({
   startOnLoad: false,
   maxTextSize: 900000,
@@ -29,31 +31,33 @@ mermaid.initialize({
 
 mermaid.parseError = (_err) => {};
 
+/* ── Component ──────────────────────────────────────── */
+
 interface MermaidDiagramProps {
   code: string;
 }
 
 export const MermaidDiagram = ({ code }: MermaidDiagramProps) => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const codeRef = useRef(code);
-  const rafRef = useRef<number>(0);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const sourceRef = useRef(code);
+  const frameRef = useRef<number>(0);
   const [error, setError] = useState<string | null>(null);
-  const [showModal, setShowModal] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [svg, setSvg] = useState<string>('');
-  const [errorCollapsed, setErrorCollapsed] = useState(true);
+  const [detailsHidden, setDetailsHidden] = useState(true);
 
-  codeRef.current = code;
+  sourceRef.current = code;
 
-  const renderDiagram = useCallback(async () => {
-    if (!containerRef.current) return;
+  const drawChart = useCallback(async () => {
+    if (!wrapperRef.current) return;
 
-    const snapshot = codeRef.current;
+    const snapshot = sourceRef.current;
 
     try {
       const id = `mermaid-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const detached = document.createElement('div');
-      const { svg: renderedSvg } = await mermaid.render(id, snapshot.trim(), detached);
-      setSvg(renderedSvg);
+      const offscreen = document.createElement('div');
+      const { svg: rendered } = await mermaid.render(id, snapshot.trim(), offscreen);
+      setSvg(rendered);
       setError(null);
     } catch (err) {
       console.debug('Mermaid render skipped (incomplete):', err);
@@ -61,13 +65,13 @@ export const MermaidDiagram = ({ code }: MermaidDiagramProps) => {
   }, []);
 
   useEffect(() => {
-    rafRef.current = requestAnimationFrame(() => {
-      renderDiagram();
+    frameRef.current = requestAnimationFrame(() => {
+      drawChart();
     });
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [code, renderDiagram]);
+    return () => cancelAnimationFrame(frameRef.current);
+  }, [code, drawChart]);
 
-  const processData: any = showModal
+  const modalPayload: any = expanded
     ? {
         id: 'ai-generated',
         label: 'AI Generated Diagram',
@@ -83,16 +87,16 @@ export const MermaidDiagram = ({ code }: MermaidDiagramProps) => {
     return (
       <div className="my-3 p-4 bg-rose-500/10 border border-rose-500/30 rounded-lg">
         <button
-          onClick={() => setErrorCollapsed((prev) => !prev)}
+          onClick={() => setDetailsHidden((prev) => !prev)}
           className="flex items-center gap-2 text-rose-300 text-sm w-full text-left"
         >
           <AlertTriangle className="w-4 h-4 flex-shrink-0" />
           <span className="font-medium">Diagram Error</span>
           <span className="ml-auto text-xs text-rose-200/50">
-            {errorCollapsed ? 'Show details' : 'Hide details'}
+            {detailsHidden ? 'Show details' : 'Hide details'}
           </span>
         </button>
-        {!errorCollapsed && (
+        {!detailsHidden && (
           <div className="mt-3 space-y-2">
             <pre className="text-xs text-rose-200/70 font-mono whitespace-pre-wrap">{error}</pre>
             <pre className="p-2 bg-surface rounded text-xs text-text-muted overflow-x-auto">
@@ -113,7 +117,7 @@ export const MermaidDiagram = ({ code }: MermaidDiagramProps) => {
               Diagram
             </span>
             <button
-              onClick={() => setShowModal(true)}
+              onClick={() => setExpanded(true)}
               className="p-1 text-text-muted hover:text-text-primary hover:bg-hover rounded transition-colors"
               title="Expand"
             >
@@ -122,17 +126,17 @@ export const MermaidDiagram = ({ code }: MermaidDiagramProps) => {
           </div>
 
           <div
-            ref={containerRef}
+            ref={wrapperRef}
             className="flex items-center justify-center p-4 overflow-x-auto max-h-[400px]"
             dangerouslySetInnerHTML={{ __html: svg }}
           />
         </div>
       </div>
 
-      {showModal && processData && (
+      {expanded && modalPayload && (
         <ProcessFlowModal
-          process={processData}
-          onClose={() => setShowModal(false)}
+          process={modalPayload}
+          onClose={() => setExpanded(false)}
         />
       )}
     </>

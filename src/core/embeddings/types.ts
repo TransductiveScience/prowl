@@ -1,6 +1,4 @@
-/* Types for vector embedding and semantic retrieval */
-
-/* Node labels that get vector embeddings */
+/* Labels eligible for vector encoding */
 export const VECTORIZABLE_TYPES = [
   'Class',
   'Function',
@@ -9,13 +7,15 @@ export const VECTORIZABLE_TYPES = [
   'File',
 ] as const;
 
-export type EmbeddableLabel = typeof VECTORIZABLE_TYPES[number];
+export type EmbeddableLabel = (typeof VECTORIZABLE_TYPES)[number];
 
-/* Check if a label is eligible for vectorisation */
-export const isEmbeddableLabel = (label: string): label is EmbeddableLabel =>
-  VECTORIZABLE_TYPES.includes(label as EmbeddableLabel);
+/** Returns true when the label should receive an embedding vector. */
+export function isEmbeddableLabel(label: string): label is EmbeddableLabel {
+  return (VECTORIZABLE_TYPES as readonly string[]).includes(label);
+}
 
-/* Embedding pipeline lifecycle phases */
+/* ── Lifecycle ────────────────────────────────────────── */
+
 export type EmbeddingPhase =
   | 'idle'
   | 'loading-model'
@@ -24,7 +24,7 @@ export type EmbeddingPhase =
   | 'ready'
   | 'error';
 
-/* Pipeline progress snapshot */
+/** Snapshot of how far the embedding pipeline has progressed. */
 export interface EmbeddingProgress {
   phase: EmbeddingPhase;
   percent: number;
@@ -36,21 +36,21 @@ export interface EmbeddingProgress {
   error?: string;
 }
 
-/* Embedding pipeline config */
+/* ── Configuration ────────────────────────────────────── */
+
 export interface EmbeddingConfig {
-  /** Model identifier for transformers.js */
+  /** transformers.js model handle */
   modelId: string;
-  /** Number of nodes to embed in each batch */
+  /** how many nodes per inference batch */
   batchSize: number;
-  /** Embedding vector dimensions */
+  /** output vector width */
   dimensions: number;
-  /** Device to use for inference: 'webgpu' for GPU acceleration, 'wasm' for WASM-based CPU */
+  /** runtime backend — prefer GPU when available */
   device: 'webgpu' | 'wasm';
-  /** Maximum characters of code snippet to include */
+  /** truncate source snippets beyond this length */
   maxSnippetLength: number;
 }
 
-/* Default config: compact arctic model, GPU-preferred */
 export const DEFAULT_EMBEDDING_CONFIG: EmbeddingConfig = {
   modelId: 'Snowflake/snowflake-arctic-embed-xs',
   batchSize: 16,
@@ -59,7 +59,9 @@ export const DEFAULT_EMBEDDING_CONFIG: EmbeddingConfig = {
   maxSnippetLength: 500,
 };
 
-/* Single semantic search result */
+/* ── Data shapes ──────────────────────────────────────── */
+
+/** Nearest-neighbour hit returned by the vector index. */
 export interface SemanticSearchResult {
   nodeId: string;
   name: string;
@@ -70,7 +72,7 @@ export interface SemanticSearchResult {
   endLine?: number;
 }
 
-/* Lightweight node shape for embedding input */
+/** Minimal node payload sent into the embedding pipeline. */
 export interface EmbeddableNode {
   id: string;
   name: string;
@@ -81,7 +83,7 @@ export interface EmbeddableNode {
   endLine?: number;
 }
 
-/* Model download progress events from transformers.js */
+/** Progress callback shape emitted by transformers.js during download. */
 export interface ModelProgress {
   status: 'initiate' | 'download' | 'progress' | 'done' | 'ready';
   file?: string;
