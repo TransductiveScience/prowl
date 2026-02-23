@@ -1,8 +1,9 @@
 /**
- * Code Agent Factory
+ * LLM Agent Builder
  *
- * Builds a LangChain ReAct agent wired up for code graph analysis.
- * Supports OpenAI, Azure OpenAI, Gemini, Anthropic, Ollama, OpenRouter, and Groq.
+ * Assembles a ReAct-style agent with graph-backed analysis tools.
+ * Handles seven provider backends: OpenAI, Azure, Gemini, Anthropic,
+ * Ollama, OpenRouter, and Groq.
  */
 
 import { SystemMessage } from '@langchain/core/messages';
@@ -25,14 +26,14 @@ import {
 } from './context-builder';
 
 /**
- * Core instructions for the Prowl agent.
+ * Base system prompt governing agent behaviour.
  *
- * Layout (tuned for reliable instruction-following):
- *  1. Identity + grounding mandate
- *  2. Working protocol
- *  3. Available tools
- *  4. Output format
- *  5. [Dynamic project context appended at runtime]
+ * Structured for maximum instruction adherence:
+ *  1. Identity and citation requirement
+ *  2. Investigation workflow
+ *  3. Tool catalogue
+ *  4. Formatting directives
+ *  5. [Project-specific context injected at runtime]
  */
 export const SYSTEM_PROMPT = `You are Prowl — an AI code analyst backed by a structured knowledge graph. Every claim you make must be grounded in evidence.
 
@@ -147,7 +148,7 @@ export const createChatModel = async (config: ProviderConfig): Promise<BaseChatM
         azureOpenAIApiInstanceName: extractInstanceName(azureConfig.endpoint),
         azureOpenAIApiDeploymentName: azureConfig.deploymentName,
         azureOpenAIApiVersion: azureConfig.apiVersion ?? '2024-12-01-preview',
-        // gpt-5.2-chat only supports temperature=1
+        /* Azure deployment — temperature left at provider default */
         streaming: true,
       });
     }
@@ -185,8 +186,8 @@ export const createChatModel = async (config: ProviderConfig): Promise<BaseChatM
         temperature: ollamaConfig.temperature ?? 0.1,
         streaming: true,
         numPredict: 30000,
-        // Bump context window well above Ollama's default (2048)
-        // — necessary for agentic tool-call workflows
+        /* Expand the context window beyond Ollama's 2 K default;
+           tool-heavy agentic loops need headroom */
         numCtx: 32768,
       });
     }
@@ -239,10 +240,8 @@ export const createChatModel = async (config: ProviderConfig): Promise<BaseChatM
   }
 };
 
-/**
- * Extract instance name from Azure endpoint URL
- * e.g., "https://my-resource.openai.azure.com" -> "my-resource"
- */
+/* Pull the instance name from an Azure OpenAI endpoint.
+   "https://my-resource.openai.azure.com" → "my-resource" */
 const extractInstanceName = (endpoint: string): string => {
   try {
     const url = new URL(endpoint);
@@ -257,9 +256,7 @@ const extractInstanceName = (endpoint: string): string => {
   }
 };
 
-/**
- * Assemble and return a ReAct agent wired to the code-graph tools.
- */
+/* Wire up a ReAct agent with all code-graph analysis tools attached */
 export const buildCodeAgent = async (
   config: ProviderConfig,
   executeQuery: (cypher: string) => Promise<any[]>,
@@ -302,13 +299,13 @@ export interface AgentMessage {
 }
 
 /**
- * Stream a response from the agent.
+ * Yield chunks from the agent in real time.
  *
- * Combines two stream modes for the best experience:
- *  - 'values' gives structured state transitions (tool calls/results in order)
- *  - 'messages' gives token-by-token text chunks
+ * Runs two LangGraph stream modes simultaneously:
+ *  - 'values': ordered state snapshots (tool invocations and their results)
+ *  - 'messages': incremental token output
  *
- * Together they preserve the natural flow: reasoning -> tool -> reasoning -> tool -> answer.
+ * The dual mode preserves the natural rhythm: think → act → think → answer.
  */
 export async function* streamAgentResponse(
   agent: ReturnType<typeof createReactAgent>,
@@ -320,7 +317,7 @@ export async function* streamAgentResponse(
       content: m.content,
     }));
 
-    // Dual mode: 'values' for structured state, 'messages' for token streaming
+    /* Both stream modes active: state snapshots + per-token delivery */
     const stream = await agent.stream(
       { messages: formattedMessages },
       {
@@ -329,13 +326,13 @@ export async function* streamAgentResponse(
       } as any
     );
 
-    // Dedup tracking
+    /* De-duplication sets */
     const emittedCalls = new Set<string>();
     const emittedResults = new Set<string>();
     let lastProcessedMsgCount = formattedMessages.length;
     let allToolsDone = true;
-    // Whether we've encountered any tool call yet — pre-tool content is narration,
-    // post-tool content (once tools finish) is the final answer.
+    /* Track whether any tool has been invoked this turn — content before
+       tools is classified as narration; content after tools complete is the answer */
     let hasSeenToolCallThisTurn = false;
 
     for await (const event of stream) {
@@ -352,7 +349,7 @@ export async function* streamAgentResponse(
         data = event;
       }
 
-      // Token-level streaming from 'messages' mode
+      /* Per-token output from the 'messages' stream */
       if (mode === 'messages') {
         const [msg] = Array.isArray(data) ? data : [data];
         if (!msg) continue;
@@ -374,7 +371,7 @@ export async function* streamAgentResponse(
           }
 
           if (content && content.length > 0) {
-            // Classify as reasoning (narration) vs final answer based on tool-call state
+            /* Decide if this is mid-reasoning narration or part of the final answer */
             const isReasoning =
               !hasSeenToolCallThisTurn ||
               toolCalls.length > 0 ||
@@ -426,7 +423,7 @@ export async function* streamAgentResponse(
         }
       }
 
-      // State snapshots from 'values' mode — catches anything missed by 'messages'
+      /* 'values' mode fallback — picks up anything the token stream missed */
       if (mode === 'values' && data?.messages) {
         const stepMessages = data.messages || [];
 
@@ -434,7 +431,7 @@ export async function* streamAgentResponse(
           const msg = stepMessages[i];
           const msgType = msg._getType?.() || msg.type || 'unknown';
 
-          // Fallback: catch tool calls not yet emitted
+          /* Safety net: emit any tool invocations not already surfaced */
           if ((msgType === 'ai' || msgType === 'AIMessage') && !emittedCalls.size) {
             const toolCalls = msg.tool_calls || [];
             for (const tc of toolCalls) {
@@ -455,7 +452,7 @@ export async function* streamAgentResponse(
             }
           }
 
-          // Fallback: catch tool results not yet emitted
+          /* Safety net: emit any tool results not already surfaced */
           if (msgType === 'tool' || msgType === 'ToolMessage') {
             const toolCallId = msg.tool_call_id || '';
             if (toolCallId && !emittedResults.has(toolCallId)) {
@@ -499,9 +496,7 @@ export async function* streamAgentResponse(
   }
 }
 
-/**
- * Non-streaming agent invocation for simple one-shot use cases.
- */
+/* Single-shot (non-streaming) agent call — returns the full response as a string */
 export const invokeAgent = async (
   agent: ReturnType<typeof createReactAgent>,
   messages: AgentMessage[]

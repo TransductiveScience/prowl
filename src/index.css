@@ -15,30 +15,30 @@
 @import "tailwindcss";
 
 /* ═══════════════════════════════════════════════════════════════
-   TAILWIND V4 THEME — APPLE LIQUID GLASS
+   TAILWIND V4 THEME ─ PROWL GLASS PALETTE
 ═══════════════════════════════════════════════════════════════ */
 @theme {
-  /* Backgrounds — Apple system grays */
+  /* Background tones — system-dark palette */
   --color-void: #1c1c1e;
   --color-deep: #2c2c2e;
   --color-surface: #38383a;
   --color-elevated: #48484a;
   --color-hover: #545456;
 
-  /* Borders */
+  /* Border tokens */
   --color-border-subtle: rgba(255, 255, 255, 0.08);
   --color-border-default: rgba(255, 255, 255, 0.15);
 
-  /* Text — Apple opacity hierarchy */
+  /* Foreground — layered opacity scale */
   --color-text-primary: #f5f5f7;
   --color-text-secondary: rgba(255, 255, 255, 0.55);
   --color-text-muted: rgba(255, 255, 255, 0.35);
 
-  /* Accent — Apple system blue */
+  /* Primary accent */
   --color-accent: #0A84FF;
   --color-accent-dim: #0070E0;
 
-  /* Node colors */
+  /* Graph node palette */
   --color-node-file: #6AAAD4;
   --color-node-folder: #D4A868;
   --color-node-class: #D08060;
@@ -47,23 +47,23 @@
   --color-node-import: #808080;
   --color-node-method: #60B8A0;
 
-  /* Fonts */
+  /* Typography stacks */
   --font-sans: 'Outfit', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
 
-  /* Animations — restrained */
+  /* Transitions — subtle motion */
   --animate-fade-in: fade-in 0.15s ease-out;
   --animate-slide-in-left: slideInLeft 0.2s ease-out;
   --animate-slide-in-right: slideInRight 0.2s ease-out;
   --animate-slide-up: slideUp 0.2s ease-out;
 
-  /* Shadows — no glows, soft elevation */
+  /* Elevation — soft drop shadows */
   --shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.2);
   --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.25);
   --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.35);
 }
 
-/* Keyframes */
+/* Keyframe definitions */
 @keyframes fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -100,7 +100,7 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   BASE STYLES
+   RESETS & BASE LAYER
 ═══════════════════════════════════════════════════════════════ */
 * {
   box-sizing: border-box;
@@ -123,7 +123,7 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   GLASS UTILITIES
+   FROSTED-GLASS HELPERS
 ═══════════════════════════════════════════════════════════════ */
 .glass {
   background: rgba(255, 255, 255, 0.08);
@@ -147,7 +147,7 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   CUSTOM SCROLLBAR
+   SCROLLBAR OVERRIDES
 ═══════════════════════════════════════════════════════════════ */
 .scrollbar-thin {
   scrollbar-width: thin;
@@ -173,7 +173,7 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   CHAT MESSAGE PROSE STYLES
+   PROSE FORMATTING FOR CHAT BUBBLES
 ═══════════════════════════════════════════════════════════════ */
 .chat-prose {
   font-size: 13px;
@@ -209,7 +209,7 @@ body {
   color: var(--color-text-secondary);
 }
 
-/* Headers */
+/* Heading hierarchy */
 .chat-prose h1,
 .chat-prose h2,
 .chat-prose h3,
@@ -239,7 +239,7 @@ body {
   margin-top: 0;
 }
 
-/* Lists */
+/* Ordered & unordered lists */
 .chat-prose ul,
 .chat-prose ol {
   margin: 0.625em 0;
@@ -262,7 +262,7 @@ body {
   margin: 0.25em 0;
 }
 
-/* Inline code */
+/* Inline code spans */
 .chat-prose code:not([class*="language-"]) {
   padding: 0.15em 0.4em;
   background: rgba(255, 255, 255, 0.1);
@@ -280,14 +280,14 @@ body {
   color: #f5f5f7 !important;
 }
 
-/* Code blocks */
+/* Fenced code blocks */
 .chat-prose pre {
   margin: 0.875em 0;
   border-radius: 10px;
   overflow: hidden;
 }
 
-/* Blockquotes */
+/* Block quotations */
 .chat-prose blockquote {
   margin: 0.875em 0;
   padding: 0.5em 1em;
@@ -301,14 +301,14 @@ body {
   margin: 0;
 }
 
-/* Horizontal rules */
+/* Thematic breaks */
 .chat-prose hr {
   margin: 1.25em 0;
   border: none;
   border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-/* Links */
+/* Hyperlinks */
 .chat-prose a:not(.code-ref-btn) {
   color: var(--color-accent);
   text-decoration: none;
@@ -318,7 +318,7 @@ body {
   text-decoration: underline;
 }
 
-/* Tables */
+/* Data tables */
 .chat-prose table {
   width: 100%;
   margin: 0.875em 0;
@@ -344,7 +344,7 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   SIGMA.JS CONTAINER
+   GRAPH RENDERER CANVAS
 ═══════════════════════════════════════════════════════════════ */
 .sigma-container {
   width: 100%;

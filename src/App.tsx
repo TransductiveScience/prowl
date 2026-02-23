@@ -54,10 +54,10 @@ const AppContent = () => {
   const [isTerminalOpen, setIsTerminalOpen] = useState(false);
   const [isRoadmapOpen, setIsRoadmapOpen] = useState(false);
 
-  // Track folder path for auto-watcher — stored in ref to avoid re-render deps
+  /* Folder path ref for the file watcher — kept in a ref to skip re-render deps */
   const pendingFolderPathRef = useRef<string | null>(null);
 
-  // Keyboard shortcuts (openFolder ref filled after handleFolderLoad is defined)
+  /* Key bindings — openFolder callback ref wired below after handleFolderLoad is declared */
   const openFolderRef = useRef<() => void>(() => {});
 
   useEffect(() => {
@@ -66,7 +66,7 @@ const AppContent = () => {
         e.preventDefault();
         setIsTerminalOpen(prev => !prev);
       }
-      // Cmd+O / Ctrl+O to open folder
+      /* Cmd+O / Ctrl+O triggers folder picker */
       if ((e.metaKey || e.ctrlKey) && e.key === 'o') {
         e.preventDefault();
         openFolderRef.current();
@@ -162,7 +162,7 @@ const AppContent = () => {
     }
   }, [setViewMode, setGraph, setFileContents, setProgress, setProjectName, runPipelineFromFiles, startEmbeddings, initializeAgent]);
 
-  // Local folder load — checks for snapshot, runs pipeline, then auto-starts the file watcher
+  /* Local folder handler — tries snapshot restore, falls back to full pipeline, then starts the watcher */
   const handleFolderLoad = useCallback(async (files: FileEntry[], folderPath: string) => {
     pendingFolderPathRef.current = folderPath;
     setProjectPath(folderPath);
@@ -172,7 +172,7 @@ const AppContent = () => {
     setProjectName(projectName);
     setLoadedFromSnapshot(false);
 
-    // Check for existing snapshot
+    /* Look for a previously cached snapshot on disk */
     const hasSnapshot = (window as any).prowl?.snapshot
       ? await (window as any).prowl.snapshot.exists(folderPath)
       : false;
@@ -186,7 +186,7 @@ const AppContent = () => {
       });
 
       if (result) {
-        // Check for incremental changes since snapshot
+        /* Detect files changed since the snapshot was written */
         let needsIncrementalUpdate = false;
         try {
           const prowlSnapshot = (window as any).prowl?.snapshot;
@@ -200,19 +200,19 @@ const AppContent = () => {
                 needsIncrementalUpdate = true;
                 setProgress({ phase: 'structure', percent: 5, message: `Updating ${totalChanges} changed files...` });
 
-                // Run incremental update via hook
+                /* Apply incremental diff via the state hook */
                 const updatedResult = await incrementalUpdate(diff, folderPath, (p) => setProgress(p));
 
                 if (updatedResult) {
                   setGraph(updatedResult.graph);
                   setFileContents(updatedResult.fileContents);
                 } else {
-                  // Incremental failed — use snapshot as-is
+                  /* Incremental pass failed — fall back to raw snapshot data */
                   setGraph(result.graph);
                   setFileContents(result.fileContents);
                 }
 
-                // Re-save snapshot with updated state
+                /* Persist the refreshed snapshot to disk */
                 saveSnapshot(folderPath).catch(console.warn);
               }
             }
@@ -233,8 +233,7 @@ const AppContent = () => {
           initializeAgent(projectName);
         }
 
-        // Embedding status is set by the worker during loadSnapshot
-        // but we still need to attempt auto-start if they weren't in the snapshot
+        /* Embeddings may have been restored from the snapshot — try auto-starting if not */
         startEmbeddings().catch((err) => {
           if (err?.name === 'WebGPUNotAvailableError' || err?.message?.includes('WebGPU')) {
             startEmbeddings('wasm').catch(console.warn);
@@ -243,14 +242,14 @@ const AppContent = () => {
           }
         });
 
-        // Auto-start the file watcher
+        /* Kick off the filesystem watcher for live updates */
         startAgentWatcher(folderPath).catch((err) => {
           console.warn('Auto-watcher failed to start:', err);
         });
 
-        return; // Skip full pipeline
+        return; /* snapshot path complete — skip full pipeline */
       }
-      // Snapshot load failed — fall through to full pipeline
+      /* Snapshot restoration failed — proceed with full ingestion below */
     }
 
     setProgress({ phase: 'extracting', percent: 0, message: 'Starting...', detail: 'Preparing to process files' });
@@ -277,12 +276,12 @@ const AppContent = () => {
         }
       });
 
-      // Auto-start the file watcher on the loaded folder
+      /* Begin watching the folder for filesystem changes */
       startAgentWatcher(folderPath).catch((err) => {
         console.warn('Auto-watcher failed to start:', err);
       });
 
-      // Non-blocking background save of snapshot
+      /* Background-save a snapshot for future fast restores */
       saveSnapshot(folderPath).catch(console.warn);
     } catch (error) {
       console.error('Indexing error:', error);
@@ -299,7 +298,7 @@ const AppContent = () => {
     }
   }, [setViewMode, setGraph, setFileContents, setProgress, setProjectName, runPipelineFromFiles, startEmbeddings, initializeAgent, startAgentWatcher, setProjectPath, setLoadedFromSnapshot, loadSnapshot, saveSnapshot, incrementalUpdate]);
 
-  // Open a folder via native directory picker, then scan and load
+  /* Launch the native directory picker, scan the result, and start ingestion */
   const openFolder = useCallback(async () => {
     const prowl = (window as any).prowl;
     if (!prowl?.selectDirectory || !prowl?.scanFolder) return;
@@ -314,19 +313,19 @@ const AppContent = () => {
     }
   }, [handleFolderLoad]);
 
-  // Keep ref in sync for keyboard shortcut
+  /* Synchronise the ref so the keyboard shortcut always calls the latest callback */
   useEffect(() => {
     openFolderRef.current = openFolder;
   }, [openFolder]);
 
-  // Clear remembered project when user returns to onboarding
+  /* Forget the last-opened project when the user navigates back to onboarding */
   useEffect(() => {
     if (viewMode === 'onboarding' && !currentProjectPath) {
       localStorage.removeItem(LAST_PROJECT_KEY);
     }
   }, [viewMode, currentProjectPath]);
 
-  // Auto-restore last project on cold start
+  /* On cold start, re-open the most recently loaded project if one is saved */
   const startupRanRef = useRef(false);
   useEffect(() => {
     if (viewMode !== 'startup' || startupRanRef.current) return;
@@ -340,7 +339,7 @@ const AppContent = () => {
       return;
     }
 
-    // Async auto-restore
+    /* Fire-and-forget async restore */
     (async () => {
       try {
         const files: FileEntry[] = await prowl.scanFolder(lastPath);
@@ -370,7 +369,7 @@ const AppContent = () => {
     initializeAgent();
   }, [refreshLLMSettings, initializeAgent]);
 
-  // Render based on view mode
+  /* Route the view based on current mode */
   if (viewMode === 'startup') {
     return <SplashScreen />;
   }
@@ -392,7 +391,7 @@ const AppContent = () => {
     return <LoadingOverlay progress={progress} />;
   }
 
-  // Exploring view
+  /* Main workspace — graph + panels */
   return (
     <div className="flex flex-col h-screen bg-void overflow-hidden">
       <UpdateBanner />
@@ -404,14 +403,14 @@ const AppContent = () => {
       />
 
       <main className="flex-1 flex min-h-0 overflow-hidden">
-        {/* Left Panel - File Tree */}
+        {/* File tree sidebar */}
         <FileTreePanel onFocusNode={handleFocusNode} />
 
-        {/* Graph area - takes remaining space */}
+        {/* Graph viewport — fills remaining width */}
         <div className="flex-1 relative min-w-0">
           <GraphCanvas ref={graphCanvasRef} />
 
-          {/* Code Editor Panel (overlay) */}
+          {/* Floating code editor overlay */}
           {isCodePanelOpen && (codeReferences.length > 0 || !!selectedNode) && (
             <div className="absolute inset-y-2 left-2 z-30 pointer-events-auto animate-slide-in-left">
               <CodeEditorPanel onFocusNode={handleFocusNode} />
@@ -419,7 +418,7 @@ const AppContent = () => {
           )}
         </div>
 
-        {/* Right Panel - Code & Chat (tabbed) */}
+        {/* Tabbed side panel — chat, flows, agent */}
         {isRightPanelOpen && <RightPanel onFocusNode={handleFocusNode} />}
       </main>
 
@@ -428,7 +427,7 @@ const AppContent = () => {
         onTerminalToggle={() => setIsTerminalOpen(prev => !prev)}
       />
 
-      {/* Terminal Drawer */}
+      {/* Integrated terminal drawer */}
       {(window as any).prowl?.terminal && (
         <TerminalDrawer
           isOpen={isTerminalOpen}
@@ -437,14 +436,14 @@ const AppContent = () => {
         />
       )}
 
-      {/* Settings Panel (modal) */}
+      {/* Provider settings modal */}
       <SettingsPanel
         isOpen={isSettingsPanelOpen}
         onClose={() => setSettingsPanelOpen(false)}
         onSettingsSaved={handleSettingsSaved}
       />
 
-      {/* Roadmap Panel (modal) */}
+      {/* Roadmap overlay */}
       <RoadmapPanel
         isOpen={isRoadmapOpen}
         onClose={() => setIsRoadmapOpen(false)}

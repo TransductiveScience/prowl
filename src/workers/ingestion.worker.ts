@@ -58,7 +58,7 @@ const getLangCore = async () => {
   return langcoreModule;
 };
 
-// Kuzu requires SharedArrayBuffer; lazy-load to degrade gracefully
+/* KuzuDB needs SharedArrayBuffer; lazy-load so we degrade cleanly without it */
 let kuzuAdapter: typeof import('../core/kuzu/kuzu-adapter') | null = null;
 const getKuzuAdapter = async () => {
   if (!kuzuAdapter) {
@@ -67,24 +67,24 @@ const getKuzuAdapter = async () => {
   return kuzuAdapter;
 };
 
-// Snapshot module (lazy loaded)
+/* Snapshot serialiser (deferred) */
 let snapshotModule: typeof import('../core/snapshot') | null = null;
 const getSnapshot = async () => {
   if (!snapshotModule) snapshotModule = await import('../core/snapshot');
   return snapshotModule;
 };
 
-// Embedding state
+/* Vector embedding progress */
 let embeddingProgress: EmbeddingProgress | null = null;
 let isEmbeddingComplete = false;
 
-// File contents state - stores full file contents for grep/read tools
+/* Full source text map — powers the grep and read tools */
 let storedFileContents: Map<string, string> = new Map();
 
-// Project path state (for snapshot persistence)
+/* Path of the loaded project (used by snapshot I/O) */
 let projectPath: string | null = null;
 
-// Agent state
+/* LLM agent handles */
 let currentAgent: any | null = null;
 let currentProviderConfig: ProviderConfig | null = null;
 let currentGraphResult: IndexingResult | null = null;
@@ -92,7 +92,7 @@ let currentGraphResult: IndexingResult | null = null;
 let pendingEnrichmentConfig: ProviderConfig | null = null;
 let enrichmentCancelled = false;
 
-// Chat cancellation flag
+/* Flag to abort an in-flight chat stream */
 let chatCancelled = false;
 
 async function warmEmbeddingModel(): Promise<void> {
@@ -121,13 +121,13 @@ const workerApi = {
     const result = await runIngestionPipeline(file, onProgress);
     currentGraphResult = result;
 
-    // Store file contents for grep/read tools (full content, not truncated)
+    /* Retain full source text for the grep/read analysis tools */
     storedFileContents = result.fileContents;
 
-    // Build BM25 index for keyword search (instant, ~100ms)
+    /* Populate the BM25 keyword index (~100 ms) */
     buildBM25Index(storedFileContents);
-    
-    // Load graph into KuzuDB for querying (optional - gracefully degrades)
+
+    /* Attempt to load the graph into KuzuDB; non-fatal if unavailable */
     try {
       onProgress({
         phase: 'complete',
@@ -144,10 +144,10 @@ const workerApi = {
       await kuzu.loadGraphToKuzu(result.graph, result.fileContents);
       
     } catch {
-      // KuzuDB is optional - silently continue without it
+      /* KuzuDB unavailable — continue without graph queries */
     }
-    
-    // Store clustering config for background enrichment (runs after graph loads)
+
+    /* Stash clustering config so background enrichment can pick it up */
     if (clusteringConfig) {
       pendingEnrichmentConfig = clusteringConfig;
     }
@@ -198,13 +198,13 @@ const workerApi = {
     const result = await pipeline.runPipelineFromFiles(files, onProgress);
     currentGraphResult = result;
 
-    // Store file contents for grep/read tools (full content, not truncated)
+    /* Retain full source text for the grep/read analysis tools */
     storedFileContents = result.fileContents;
 
-    // Build BM25 index for keyword search (instant, ~100ms)
+    /* Populate the BM25 keyword index (~100 ms) */
     buildBM25Index(storedFileContents);
-    
-    // Load graph into KuzuDB for querying (optional - gracefully degrades)
+
+    /* Attempt to load the graph into KuzuDB; non-fatal if unavailable */
     try {
       onProgress({
         phase: 'complete',
@@ -221,10 +221,10 @@ const workerApi = {
       await kuzu.loadGraphToKuzu(result.graph, result.fileContents);
       
     } catch {
-      // KuzuDB is optional - silently continue without it
+      /* KuzuDB unavailable — continue without graph queries */
     }
-    
-    // Store clustering config for background enrichment (runs after graph loads)
+
+    /* Stash clustering config so background enrichment can pick it up */
     if (clusteringConfig) {
       pendingEnrichmentConfig = clusteringConfig;
     }
@@ -241,8 +241,8 @@ const workerApi = {
       throw new Error('Load a project before querying.');
     }
 
-    // If embeddings were already restored from snapshot, just report ready
-    // (the vector index + data are already in KuzuDB, model is warming in background)
+    /* If vectors were already loaded from a snapshot, nothing to compute —
+       the index is live and the model is warming in the background */
     if (isEmbeddingComplete) {
       onProgress({ phase: 'ready', percent: 100, nodesProcessed: 0, totalNodes: 0 });
       return;
@@ -280,7 +280,7 @@ const workerApi = {
         pendingEnrichmentConfig,
         onProgress ?? (() => {})
       );
-      pendingEnrichmentConfig = null; // Clear after running
+      pendingEnrichmentConfig = null; /* consumed */
       return { enriched: 1, skipped: false };
     } catch (err) {
       console.error('[prowl:worker] background enrichment failed:', err);
@@ -503,7 +503,7 @@ const workerApi = {
       }
     } catch (error) {
       if (chatCancelled) {
-        // Swallow errors from cancellation
+        /* Suppress errors triggered by the cancellation itself */
         onChunk({ type: 'done' });
         return;
       }
@@ -530,17 +530,17 @@ const workerApi = {
     meta: import('../core/snapshot/types').SnapshotMeta,
     onProgress: (progress: IndexingProgress) => void,
   ): Promise<import('../core/snapshot/types').RestoreFromSnapshotResult> {
-    // Deserialize
+    /* Unpack the binary snapshot */
     onProgress({ phase: 'structure', percent: 20, message: 'Deserializing snapshot...' });
     const { deserializeSnapshot, restoreGraphFromPayload, restoreFileContents } = await getSnapshot();
     const payload = await deserializeSnapshot(data);
 
-    // Restore graph
+    /* Reconstruct the in-memory graph */
     onProgress({ phase: 'parsing', percent: 40, message: 'Restoring graph...' });
     const graph = restoreGraphFromPayload(payload);
     const fileContentsMap = restoreFileContents(payload);
 
-    // Set worker state
+    /* Hydrate worker-level state */
     storedFileContents = fileContentsMap;
     currentGraphResult = {
       graph,
@@ -549,12 +549,12 @@ const workerApi = {
       processResult: { processes: [], steps: [], stats: { totalProcesses: 0, crossCommunityCount: 0, avgStepCount: 0, entryPointsFound: 0 } },
     };
 
-    // Rebuild BM25 from file contents (fast, ~100ms)
+    /* Re-create the BM25 keyword index from restored files */
     onProgress({ phase: 'imports', percent: 60, message: 'Rebuilding search index...' });
     const { buildBM25Index } = await getSearch();
     buildBM25Index(storedFileContents);
 
-    // Restore KuzuDB
+    /* Reload KuzuDB tables from the snapshot payload */
     onProgress({ phase: 'calls', percent: 70, message: 'Restoring graph database...' });
     try {
       const { restoreKuzuFromSnapshot } = await import('../core/snapshot/kuzu-restorer');
@@ -563,7 +563,7 @@ const workerApi = {
       console.warn('[prowl:snapshot] KuzuDB restore failed (non-fatal):', err);
     }
 
-    // Set embedding state and warm model in background
+    /* Mark embeddings as live and start warming the model in the background */
     const hasEmbeddings = payload.embeddings.length > 0;
     if (hasEmbeddings) {
       isEmbeddingComplete = true;
@@ -606,20 +606,20 @@ const workerApi = {
         onProgress,
       );
 
-      // Update worker state
+      /* Refresh worker-level state with the updated graph */
       currentGraphResult = result;
       storedFileContents = result.fileContents;
 
-      // Rebuild BM25
+      /* Rebuild keyword index */
       const { buildBM25Index } = await getSearch();
       buildBM25Index(storedFileContents);
 
-      // Reload KuzuDB
+      /* Refresh KuzuDB with the updated graph */
       try {
         const kuzu = await getKuzuAdapter();
         await kuzu.loadGraphToKuzu(result.graph, result.fileContents);
       } catch {
-        // KuzuDB is optional
+        /* graph database unavailable */
       }
 
       return serializeIndexingResult(result);
@@ -647,7 +647,7 @@ const workerApi = {
     const prowlVersion = (import.meta.env.VITE_APP_VERSION as string) || 'unknown';
     const projectName = projectPath?.split('/').filter(Boolean).pop() || 'project';
 
-    // gitCommit is set to null here — renderer patches it after
+    /* gitCommit left null — the renderer fills it in post-serialisation */
     const payload = await collectSnapshotPayload(
       currentGraphResult.graph,
       currentGraphResult.fileContents,
@@ -673,7 +673,7 @@ const workerApi = {
 
     const { graph } = currentGraphResult;
     
-    // Filter for community nodes
+    /* Collect the Community-labelled nodes */
     const communityNodes = graph.nodes
       .filter(n => n.label === 'Community')
       .map(n => ({
@@ -688,12 +688,12 @@ const workerApi = {
       return { enrichments: {}, tokensUsed: 0 };
     }
 
-    // Build member map: CommunityID -> Member Info
+    /* Map each community to its member symbols */
     const memberMap = new Map<string, ClusterMemberInfo[]>();
     
     communityNodes.forEach(c => memberMap.set(c.id, []));
     
-    // Find all MEMBER_OF edges
+    /* Walk MEMBER_OF relationships to populate the member map */
     graph.relationships.forEach(rel => {
       if (rel.type === 'MEMBER_OF') {
         const communityId = rel.targetId;
@@ -737,7 +737,7 @@ const workerApi = {
     if (import.meta.env.DEV) {
     }
 
-    // Update graph nodes with enrichment data
+    /* Patch in-memory graph nodes with the LLM-generated metadata */
     graph.nodes.forEach(node => {
       if (node.label === 'Community' && enrichments.has(node.id)) {
         const enrichment = enrichments.get(node.id)!;
@@ -748,7 +748,7 @@ const workerApi = {
       }
     });
 
-    // Update KuzuDB with new data
+    /* Sync the enriched labels back to KuzuDB */
     try {
       const kuzu = await getKuzuAdapter();
         
