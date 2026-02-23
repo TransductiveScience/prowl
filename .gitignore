@@ -9,3 +9,4 @@ docs/*
 !docs/plans/
 !docs/gitnexus-provenance-audit.md
 .prowl/
+docs
