@@ -233,6 +233,115 @@ const checkOllamaStatus = async (baseUrl: string) => {
   } catch { return { ok: false, error: 'Not running. Start with: ollama serve' }; }
 };
 
+const McpSection = () => {
+  const [status, setStatus] = useState<{ configured: boolean; configPath: string | null; mcpServerPath: string | null } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<'success' | 'error' | null>(null);
+  const [showManual, setShowManual] = useState(false);
+  const [serverInfo, setServerInfo] = useState<{ port: number } | null>(null);
+
+  const prowl = typeof window !== 'undefined' ? (window as any).prowl : null;
+  const hasMcp = !!prowl?.mcp;
+
+  useEffect(() => {
+    if (!hasMcp) return;
+    prowl.mcp.getConfigStatus().then((s: any) => setStatus(s));
+    prowl.mcp.getServerInfo().then((info: any) => setServerInfo(info));
+  }, [hasMcp]);
+
+  const handleAdd = async () => {
+    setLoading(true); setResult(null);
+    const res = await prowl.mcp.configureClaudeCode();
+    setLoading(false);
+    setResult(res.success ? 'success' : 'error');
+    if (res.success) {
+      const s = await prowl.mcp.getConfigStatus();
+      setStatus(s);
+    }
+    setTimeout(() => setResult(null), 3000);
+  };
+
+  const handleRemove = async () => {
+    setLoading(true); setResult(null);
+    const res = await prowl.mcp.removeClaudeCode();
+    setLoading(false);
+    setResult(res.success ? 'success' : 'error');
+    if (res.success) {
+      const s = await prowl.mcp.getConfigStatus();
+      setStatus(s);
+    }
+    setTimeout(() => setResult(null), 3000);
+  };
+
+  if (!hasMcp) return null;
+
+  return (
+    <div className="mt-4 pt-4 border-t border-white/[0.06]">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[12px] text-text-muted font-medium">MCP Server</span>
+        {serverInfo && (
+          <span className="text-[10px] text-green-400/60 font-mono">port {serverInfo.port}</span>
+        )}
+      </div>
+      <p className="text-[11px] text-text-muted/60 mb-3">
+        Connect Prowl's knowledge graph to Claude Code and other MCP-compatible agents.
+      </p>
+
+      {status?.configured ? (
+        <div className="flex items-center justify-between py-2 px-3 bg-green-500/[0.08] border border-green-500/20 rounded-lg mb-2">
+          <div className="flex items-center gap-2">
+            <Check className="w-3.5 h-3.5 text-green-400" />
+            <span className="text-[12px] text-text-secondary">Added to Claude Code</span>
+          </div>
+          <button onClick={handleRemove} disabled={loading}
+            className="text-[11px] text-text-muted hover:text-[#FF453A] transition-colors">
+            {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Remove'}
+          </button>
+        </div>
+      ) : (
+        <button onClick={handleAdd} disabled={loading}
+          className="w-full flex items-center justify-center gap-2 py-2 mb-2 rounded-lg text-[12px] bg-accent/[0.08] border border-accent/25 text-accent hover:bg-accent/[0.14] hover:border-accent/40 disabled:opacity-50 transition-all">
+          {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+          Add to Claude Code (one click)
+        </button>
+      )}
+
+      {result === 'success' && (
+        <div className="flex items-center gap-1.5 text-[11px] text-green-400 mb-2">
+          <Check className="w-3 h-3" />
+          <span>{status?.configured ? 'Configured' : 'Removed'}. Restart Claude Code to apply.</span>
+        </div>
+      )}
+      {result === 'error' && (
+        <div className="flex items-center gap-1.5 text-[11px] text-[#FF453A] mb-2">
+          <AlertCircle className="w-3 h-3" />
+          <span>Failed — try manual setup below.</span>
+        </div>
+      )}
+
+      <button onClick={() => setShowManual(!showManual)}
+        className="text-[11px] text-text-muted/50 hover:text-text-muted transition-colors">
+        {showManual ? 'Hide' : 'Show'} manual setup
+      </button>
+
+      {showManual && (
+        <div className="mt-2 p-3 bg-white/[0.02] border border-white/[0.06] rounded-lg">
+          <p className="text-[11px] text-text-muted/60 mb-2">
+            Add this to <code className="text-text-muted/80">~/.claude.json</code> → <code className="text-text-muted/80">mcpServers</code>:
+          </p>
+          <pre className="text-[10px] font-mono text-text-muted/70 bg-black/20 p-2 rounded overflow-x-auto select-all">
+{`"prowl": {
+  "type": "stdio",
+  "command": "node",
+  "args": ["${status?.mcpServerPath || '/path/to/prowl/dist/mcp-server.js'}"]
+}`}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const StorageSection = () => {
   const [diskUsage, setDiskUsage] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
@@ -582,6 +691,7 @@ export const SettingsPanel = ({ isOpen, onClose, onSettingsSaved }: SettingsPane
           </>}
 
           </div>
+          <McpSection />
           <StorageSection />
         </div>
 

@@ -10,6 +10,8 @@ import { ProcessFileMonitor } from './process-file-monitor'
 import { OpenClawWSClient } from './openclaw-ws-client'
 import { TerminalManager } from './terminal-manager'
 import { checkForUpdate } from './update-checker'
+import { startMcpHttpServer } from './mcp-http'
+import { configureMcpForClaudeCode, removeMcpFromClaudeCode, getMcpConfigStatus } from './mcp-config'
 
 function resolvePath(p: string): string {
   if (p.startsWith('~/') || p === '~') {
@@ -119,6 +121,9 @@ let processMonitor: ProcessFileMonitor | null = null
 let openclawClient: OpenClawWSClient | null = null
 const terminalManager = new TerminalManager()
 const snapshotIO = new SnapshotIO()
+
+// MCP HTTP API server handle
+let mcpServer: { port: number; token: string; close: () => Promise<void> } | null = null
 
 // ── Secure Storage (safeStorage) ──
 // Encrypts API keys using OS keychain (macOS Keychain, Windows DPAPI, Linux libsecret)
@@ -237,9 +242,36 @@ function createWindow(): void {
   })
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   createWindow()
   terminalManager.setWindow(mainWindow!)
+
+  // Start MCP HTTP API server
+  try {
+    mcpServer = await startMcpHttpServer(() => mainWindow)
+    console.log(`[prowl] MCP HTTP API started on port ${mcpServer.port}`)
+    ipcMain.on('mcp:log', (_e, msg: string) => console.log(`[prowl:mcp] ${msg}`))
+  } catch (err) {
+    console.error('[prowl] Failed to start MCP HTTP API:', err)
+  }
+
+  // MCP configuration IPC handlers
+  ipcMain.handle('mcp:configure-claude-code', async () => {
+    return configureMcpForClaudeCode()
+  })
+
+  ipcMain.handle('mcp:get-config-status', async () => {
+    return getMcpConfigStatus()
+  })
+
+  ipcMain.handle('mcp:remove-claude-code', async () => {
+    return removeMcpFromClaudeCode()
+  })
+
+  ipcMain.handle('mcp:get-server-info', () => {
+    if (!mcpServer) return null
+    return { port: mcpServer.port }
+  })
 
   // Dialog handlers
   ipcMain.handle('dialog:openDirectory', async () => {
@@ -524,10 +556,21 @@ function stopAllWatchers(): void {
   openclawClient = null
 }
 
+app.on('will-quit', async () => {
+  if (mcpServer) {
+    await mcpServer.close()
+    mcpServer = null
+  }
+})
+
 app.on('window-all-closed', () => {
   stopAllWatchers()
   parser?.stop()
   terminalManager.killAll()
+  if (mcpServer) {
+    mcpServer.close().catch(() => {})
+    mcpServer = null
+  }
   if (process.platform !== 'darwin') {
     app.quit()
   }

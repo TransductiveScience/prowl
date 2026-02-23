@@ -1,10 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { IndexingProgress } from '../types/pipeline';
 
-interface LoadingOverlayProps {
-  progress: IndexingProgress;
-}
-
 const MATRIX_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@#$%&*+=<>{}[]|/\\~^';
 const LINE_LENGTH = 42;
 
@@ -32,7 +28,12 @@ function useMatrixLine(speed: number = 50) {
   return line;
 }
 
-export const LoadingOverlay = ({ progress }: LoadingOverlayProps) => {
+interface LoadingOverlayProps {
+  progress: IndexingProgress;
+  onCancel?: () => void;
+}
+
+export const LoadingOverlay = ({ progress, onCancel }: LoadingOverlayProps) => {
   const matrixLine = useMatrixLine(60);
 
   return (
@@ -40,6 +41,16 @@ export const LoadingOverlay = ({ progress }: LoadingOverlayProps) => {
       <div className="absolute inset-0 pointer-events-none overflow-hidden">
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-accent/[0.04] rounded-full blur-[120px]" />
       </div>
+
+      {/* Cancel / choose another folder */}
+      {onCancel && (
+        <button
+          onClick={onCancel}
+          className="absolute top-5 right-5 px-3 py-1.5 text-[11px] tracking-wide text-text-muted hover:text-text-secondary border border-white/[0.08] hover:border-white/[0.15] rounded-md transition-colors bg-white/[0.03] hover:bg-white/[0.06]"
+        >
+          Cancel
+        </button>
+      )}
 
       <div className="mb-8 font-mono text-[11px] tracking-[0.3em] text-accent/40 select-none overflow-hidden whitespace-nowrap w-80 text-center">
         {matrixLine}

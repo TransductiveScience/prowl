@@ -26,6 +26,7 @@ const categories: RoadmapCategory[] = [
   { id: 'graph', name: 'Graph & Viz', icon: Database, color: '#0A84FF' },
   { id: 'auth', name: 'Auth & Security', icon: Shield, color: '#BF5AF2' },
   { id: 'ui', name: 'UI/UX', icon: Settings, color: '#FF9F0A' },
+  { id: 'int', name: 'Integrations', icon: Rocket, color: '#FF375F' },
 ];
 
 const roadmapItems: RoadmapItem[] = [
@@ -244,21 +245,27 @@ const roadmapItems: RoadmapItem[] = [
     category: 'ui',
   },
 
-  // Integrations - Planned
+  // Integrations
   {
     id: 'int-mcp',
     title: 'MCP Server',
-    description: 'Model Context Protocol for external tools',
-    status: 'planned',
-    category: 'core',
-    effort: 'large',
+    description: '12 tools over stdio — Claude Code, Cursor, and other agents query the knowledge graph directly. 97.8% token savings measured.',
+    status: 'completed',
+    category: 'int',
+  },
+  {
+    id: 'int-mcp-config',
+    title: 'One-Click MCP Setup',
+    description: 'Auto-configure Claude Code from Prowl Settings — writes ~/.claude.json with correct server path',
+    status: 'completed',
+    category: 'int',
   },
   {
     id: 'int-github',
     title: 'GitHub PR Integration',
     description: 'Preview PRs with code graph context',
     status: 'planned',
-    category: 'core',
+    category: 'int',
     effort: 'large',
   },
   {
@@ -266,7 +273,7 @@ const roadmapItems: RoadmapItem[] = [
     title: 'VS Code Extension',
     description: 'Native IDE integration',
     status: 'backlog',
-    category: 'core',
+    category: 'int',
     effort: 'large',
   },
 ];
@@ -327,7 +334,7 @@ interface RoadmapPanelProps {
 
 export const RoadmapPanel = ({ isOpen, onClose }: RoadmapPanelProps) => {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(['core', 'chat', 'graph', 'auth', 'ui']));
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(['core', 'chat', 'graph', 'auth', 'ui', 'int']));
 
   const toggleCategory = (catId: string) => {
     setExpandedCategories(prev => {

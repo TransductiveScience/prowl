@@ -25,6 +25,13 @@ export interface UpdateInfo {
   releaseName: string
 }
 
+// MCP request queue: main → preload via IPC, renderer polls via contextBridge
+const mcpRequestQueue: Array<{ requestId: string; toolName: string; params: unknown }> = []
+ipcRenderer.on('mcp:request', (_, data) => {
+  mcpRequestQueue.push(data)
+  ipcRenderer.send('mcp:log', `queued: ${data.toolName} (size=${mcpRequestQueue.length})`)
+})
+
 const prowlApi = {
   // Dialog
   selectDirectory: (): Promise<string | null> =>
@@ -156,6 +163,33 @@ const prowlApi = {
     },
     removeUpdateListener: () => {
       ipcRenderer.removeAllListeners('updater:update-available')
+    },
+  },
+
+  // MCP (Model Context Protocol) bridge
+  mcp: {
+    configureClaudeCode: (): Promise<{ success: boolean; path?: string; error?: string }> =>
+      ipcRenderer.invoke('mcp:configure-claude-code'),
+    removeClaudeCode: (): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('mcp:remove-claude-code'),
+    getConfigStatus: (): Promise<{ configured: boolean; configPath: string | null; mcpServerPath: string | null }> =>
+      ipcRenderer.invoke('mcp:get-config-status'),
+    getServerInfo: (): Promise<{ port: number } | null> =>
+      ipcRenderer.invoke('mcp:get-server-info'),
+    // MCP request queue: preload collects IPC events, renderer polls for them.
+    // This avoids contextBridge callback deadlocks — renderer initiates all calls.
+    pollRequests: (): Array<{ requestId: string; toolName: string; params: unknown }> => {
+      if (mcpRequestQueue.length > 0) {
+        ipcRenderer.send('mcp:log', `poll: draining ${mcpRequestQueue.length} items`)
+      }
+      const items = [...mcpRequestQueue]
+      mcpRequestQueue.length = 0
+      return items
+    },
+    // Called by renderer to send MCP tool results back to main process
+    sendResult: (requestId: string, result: unknown): void => {
+      ipcRenderer.send('mcp:log', `sendResult: ${requestId} result=${JSON.stringify(result)?.slice(0, 120)}`)
+      ipcRenderer.send('mcp:response', requestId, result)
     },
   },
 }

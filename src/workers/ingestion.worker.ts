@@ -783,7 +783,113 @@ const workerApi = {
     }
      
     return { enrichments: enrichmentsRecord, tokensUsed };
-  
+
+  },
+
+  /* ── MCP wrapper methods ─────────────────────────────── */
+
+  async mcpGrep(
+    pattern: string,
+    fileFilter?: string,
+    caseSensitive?: boolean,
+    maxResults?: number,
+  ): Promise<Array<{ file: string; line: number; content: string }>> {
+    const regexFlags = caseSensitive ? 'g' : 'gi';
+    const compiledPattern = new RegExp(pattern, regexFlags);
+    const cap = maxResults ?? 100;
+    const hits: Array<{ file: string; line: number; content: string }> = [];
+
+    for (const [fp, body] of storedFileContents.entries()) {
+      if (fileFilter && !fp.toLowerCase().includes(fileFilter.toLowerCase())) continue;
+      const sourceLines = body.split('\n');
+      for (let lineIdx = 0; lineIdx < sourceLines.length; lineIdx++) {
+        if (compiledPattern.test(sourceLines[lineIdx])) {
+          hits.push({
+            file: fp,
+            line: lineIdx + 1,
+            content: sourceLines[lineIdx].trim().slice(0, 150),
+          });
+          if (hits.length >= cap) break;
+        }
+        compiledPattern.lastIndex = 0;
+      }
+      if (hits.length >= cap) break;
+    }
+    return hits;
+  },
+
+  mcpReadFile(filePath: string): { content: string | null; resolvedPath: string | null } {
+    const normalizedInput = filePath.replace(/\\/g, '/').toLowerCase();
+    let content = storedFileContents.get(filePath) ?? null;
+    let resolvedPath: string | null = content ? filePath : null;
+
+    if (!content) {
+      for (const [candidate, body] of storedFileContents.entries()) {
+        const normalizedCandidate = candidate.toLowerCase();
+        if (normalizedCandidate === normalizedInput || normalizedCandidate.endsWith(normalizedInput)) {
+          content = body;
+          resolvedPath = candidate;
+          break;
+        }
+      }
+    }
+
+    return { content, resolvedPath };
+  },
+
+  async mcpGetContext(projectName?: string): Promise<any> {
+    const kuzu = await getKuzuAdapter();
+    if (!kuzu.isKuzuReady()) return null;
+    const context = await getContext();
+    return context.buildProjectContext(kuzu.executeQuery, projectName || 'project');
+  },
+
+  async mcpGetHotspots(limit?: number): Promise<any[]> {
+    const kuzu = await getKuzuAdapter();
+    if (!kuzu.isKuzuReady()) return [];
+    const context = await getContext();
+    return context.getHotspots(kuzu.executeQuery, limit ?? 10);
+  },
+
+  async mcpAsk(question: string): Promise<string> {
+    if (!currentAgent) {
+      throw new Error('No LLM provider configured. Initialize the agent in Prowl first.');
+    }
+
+    chatCancelled = false;
+    const chunks: string[] = [];
+
+    const { streamAgentResponse } = await getAgent();
+    const messages = [{ role: 'user' as const, content: question }];
+    for await (const chunk of streamAgentResponse(currentAgent, messages)) {
+      if (chatCancelled) break;
+      if (chunk.type === 'content' && chunk.content) chunks.push(chunk.content);
+      if (chunk.type === 'reasoning' && chunk.reasoning) chunks.push(chunk.reasoning);
+      if (chunk.type === 'error') throw new Error(chunk.error);
+    }
+    return chunks.join('');
+  },
+
+  async mcpInvestigate(task: string, depth?: number): Promise<string> {
+    if (!currentAgent) {
+      throw new Error('No LLM provider configured. Initialize the agent in Prowl first.');
+    }
+
+    chatCancelled = false;
+    const chunks: string[] = [];
+
+    const maxSteps = depth ?? 5;
+    const framedQuestion = `Investigation task (use up to ${maxSteps} tool calls to be thorough):\n\n${task}\n\nBe systematic: search broadly first, then drill into specifics. Summarize findings with file paths and line numbers.`;
+
+    const { streamAgentResponse } = await getAgent();
+    const messages = [{ role: 'user' as const, content: framedQuestion }];
+    for await (const chunk of streamAgentResponse(currentAgent, messages)) {
+      if (chatCancelled) break;
+      if (chunk.type === 'content' && chunk.content) chunks.push(chunk.content);
+      if (chunk.type === 'reasoning' && chunk.reasoning) chunks.push(chunk.reasoning);
+      if (chunk.type === 'error') throw new Error(chunk.error);
+    }
+    return chunks.join('');
   },
 };
 

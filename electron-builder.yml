@@ -11,6 +11,10 @@ files:
   - node_modules/**/*
   - "!node_modules/**/*.{md,ts,map}"
 
+extraResources:
+  - from: dist/mcp-server.js
+    to: mcp-server.js
+
 extraMetadata:
   main: dist/main/index.js
 

@@ -330,36 +330,21 @@ const AppContent = () => {
     }
   }, [viewMode, currentProjectPath]);
 
-  /* On cold start, re-open the most recently loaded project if one is saved */
+  /* On cold start, go straight to folder selection */
   const startupRanRef = useRef(false);
   useEffect(() => {
     if (viewMode !== 'startup' || startupRanRef.current) return;
     startupRanRef.current = true;
+    setViewMode('onboarding');
+  }, [viewMode, setViewMode]);
 
-    const lastPath = localStorage.getItem(LAST_PROJECT_KEY);
-    const prowl = (window as any).prowl;
-
-    if (!lastPath || !prowl?.scanFolder) {
-      setViewMode('onboarding');
-      return;
-    }
-
-    /* Fire-and-forget async restore */
-    (async () => {
-      try {
-        const files: FileEntry[] = await prowl.scanFolder(lastPath);
-        if (files.length === 0) {
-          localStorage.removeItem(LAST_PROJECT_KEY);
-          setViewMode('onboarding');
-          return;
-        }
-        handleFolderLoad(files, lastPath);
-      } catch {
-        localStorage.removeItem(LAST_PROJECT_KEY);
-        setViewMode('onboarding');
-      }
-    })();
-  }, [viewMode, setViewMode, handleFolderLoad]);
+  /* Cancel auto-restore or loading — go back to folder selection */
+  const handleCancelLoading = useCallback(() => {
+    localStorage.removeItem(LAST_PROJECT_KEY);
+    setProjectPath(null);
+    setProgress(null);
+    setViewMode('onboarding');
+  }, [setViewMode, setProgress, setProjectPath]);
 
   const handleFocusNode = useCallback((nodeId: string) => {
     graphCanvasRef.current?.focusNode(nodeId);
@@ -376,7 +361,7 @@ const AppContent = () => {
 
   /* Route the view based on current mode */
   if (viewMode === 'startup') {
-    return <SplashScreen />;
+    return <SplashScreen onCancel={handleCancelLoading} />;
   }
 
   if (viewMode === 'onboarding') {
@@ -393,7 +378,7 @@ const AppContent = () => {
   }
 
   if (viewMode === 'loading' && progress) {
-    return <LoadingOverlay progress={progress} />;
+    return <LoadingOverlay progress={progress} onCancel={handleCancelLoading} />;
   }
 
   /* Main workspace — graph + panels */

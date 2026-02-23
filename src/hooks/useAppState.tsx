@@ -13,6 +13,7 @@ import { initOAuth } from '../core/llm/oauth-service';
 import type { AgentMessage } from '../core/llm/agent';
 import { DEFAULT_VISIBLE_EDGES, type EdgeType } from '../lib/constants';
 import { useAgentWatcher, type ToolEvent } from './useAgentWatcher';
+import type { McpToolName } from '../mcp/types';
 
 export interface AgentWatcherState {
   activeNodeIds: Set<string>;
@@ -173,6 +174,9 @@ interface AppState {
   agentWatcherState: AgentWatcherState;
   startAgentWatcher: (workspacePath: string, logPath?: string) => Promise<void>;
   stopAgentWatcher: () => Promise<void>;
+
+  // Worker API access (for MCP bridge)
+  getWorkerApi: () => Comlink.Remote<IndexerWorkerApi> | null;
 
   // Snapshot persistence
   projectPath: string | null;
@@ -527,6 +531,59 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => {
       apiRef.current = null;
     };
   }, []);
+
+  // MCP handler: receives tool requests from main process via contextBridge callback.
+  // Same pattern as onFileActivity, onToolEvent, terminal.onData — proven IPC flow.
+  const projectNameRef = useRef(projectName);
+  projectNameRef.current = projectName;
+
+  useEffect(() => {
+    let toolHandlersModule: typeof import('../mcp/tool-handlers') | null = null;
+
+    // Poll for MCP requests from the preload queue every 100ms.
+    // Avoids contextBridge callback deadlocks — renderer initiates all calls.
+    const pollInterval = setInterval(() => {
+      const requests = window.prowl.mcp.pollRequests();
+      for (let i = 0; i < requests.length; i++) {
+        const req = requests[i];
+        const { requestId, toolName } = req;
+        const api = apiRef.current;
+
+        if (!api) {
+          window.prowl.mcp.sendResult(requestId, {
+            success: false,
+            error: 'Worker not ready. Open a project in Prowl first.',
+          });
+          continue;
+        }
+
+        // Async tool execution
+        (async () => {
+          try {
+            if (!toolHandlersModule) {
+              toolHandlersModule = await import('../mcp/tool-handlers');
+            }
+            const result = await toolHandlersModule.executeMcpTool(
+              api,
+              toolName as McpToolName,
+              req.params,
+              { projectName: projectNameRef.current || undefined },
+            );
+            window.prowl.mcp.sendResult(requestId, result);
+          } catch (err) {
+            window.prowl.mcp.sendResult(requestId, {
+              success: false,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        })();
+      }
+    }, 100);
+
+    return () => {
+      clearInterval(pollInterval);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const runPipeline = useCallback(async (
     file: File,
@@ -1306,6 +1363,7 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => {
     agentWatcherState,
     startAgentWatcher,
     stopAgentWatcher,
+    getWorkerApi: () => apiRef.current,
     projectPath,
     setProjectPath,
     loadedFromSnapshot,
