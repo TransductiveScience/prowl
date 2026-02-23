@@ -260,6 +260,14 @@ const roadmapItems: RoadmapItem[] = [
     category: 'int',
   },
   {
+    id: 'int-mcp-live',
+    title: 'Live MCP Reindexing',
+    description: 'Hot-reload changed files into the knowledge graph on write — MCP tools always return current content',
+    status: 'planned',
+    category: 'int',
+    effort: 'medium',
+  },
+  {
     id: 'int-github',
     title: 'GitHub PR Integration',
     description: 'Preview PRs with code graph context',
