@@ -179,7 +179,7 @@ const roadmapItems: RoadmapItem[] = [
     id: 'auth-oauth',
     title: 'OAuth Login',
     description: 'Sign in with Claude and OpenAI',
-    status: 'in-progress',
+    status: 'planned',
     category: 'auth',
     effort: 'medium',
   },
@@ -207,9 +207,8 @@ const roadmapItems: RoadmapItem[] = [
     id: 'ui-styling',
     title: 'Design System',
     description: 'Consistent color palette, typography, spacing',
-    status: 'in-progress',
+    status: 'completed',
     category: 'ui',
-    effort: 'large',
   },
   {
     id: 'ui-responsive',
@@ -240,10 +239,9 @@ const roadmapItems: RoadmapItem[] = [
   {
     id: 'ui-animations',
     title: 'Micro-animations',
-    description: 'Smooth transitions and feedback',
-    status: 'planned',
+    description: 'Smooth transitions, layout easing, and visual feedback',
+    status: 'completed',
     category: 'ui',
-    effort: 'small',
   },
 
   // Integrations - Planned

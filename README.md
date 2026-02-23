@@ -6,6 +6,8 @@
 
 **Your second monitor while AI writes the code.**
 
+See what your AI coder is actually doing — a live visual map of your entire project that lights up as files change.
+
 [![Version](https://img.shields.io/github/v/tag/neur0map/prowl?label=version)](https://github.com/neur0map/prowl/releases)
 [![Beta](https://img.shields.io/badge/status-beta-orange.svg)](#)
 [![License](https://img.shields.io/badge/license-BSL--1.0-green.svg)](LICENSE)
@@ -14,108 +16,141 @@
 
 <br />
 
-[Features](#features) · [Quick Start](#quick-start) · [Why Prowl](#why-prowl) · [Languages](#supported-languages) · [Tech Stack](#tech-stack)
+### [Download for macOS (Apple Silicon)](https://github.com/neur0map/prowl/releases/latest) · [macOS (Intel)](https://github.com/neur0map/prowl/releases/latest) · [Windows](https://github.com/neur0map/prowl/releases/latest) · [Linux](https://github.com/neur0map/prowl/releases/latest)
 
 <br />
-
-### Focus Graph
 
 <img src="public/media/focus-graph.png" alt="Prowl Focus Graph" width="800" />
-
-<br />
-
-### Code Inspector
-
-<img src="public/media/code.png" alt="Prowl Code Inspector" width="800" />
 
 </div>
 
 ---
 
-## Why Prowl
+## What is Prowl?
 
-You're vibe coding — shipping fast with AI writing most of it. Claude Code, Codex, or Gemini CLI running in your terminal. Files appearing, changing, disappearing. You're watching text scroll by, hoping nothing breaks.
+Prowl is a desktop app that sits next to your AI coding tool. You open your project, and Prowl builds an interactive map of every file, function, and connection. When your AI starts writing code, you watch the map update live.
 
-Prowl gives you the picture.
+**It works with any AI coder:** Claude Code, Cursor, Codex, Gemini CLI, Aider, Windsurf — anything that edits files.
 
-| Problem | Prowl |
-|---------|-------|
-| Staring at terminal output, guessing what's changing | Watch files light up on a graph in real time |
-| Need to understand code without reading it | Ask questions in a separate chat |
-| Bloating your AI coder's context with "what does X do?" | Query Prowl instead, keep your main context clean |
-| Want to explore a GitHub repo before cloning | Paste the URL, browse the structure |
-| Searching folders for "the file that handles auth" | Graph shows relationships, chat finds it instantly |
+**You don't need to be a programmer to use it.** If you can drag a folder onto an app, you can use Prowl.
 
 ---
 
-## Why Give It a Try
+## How It Works
 
-| If you... | Prowl helps by... |
-|-----------|-------------------|
-| Use Claude Code, Codex, Gemini CLI, or similar | Showing live file activity while they work |
-| Work on unfamiliar codebases | Mapping structure without reading every file |
-| Want to save tokens | Querying Prowl instead of your main coder |
-| Review AI-generated code | Seeing what changed at a glance |
-| Explore open source projects | Browsing GitHub repos without cloning |
+```
+1. Open your project folder in Prowl
+         |
+2. Prowl builds a visual map of your codebase
+         |
+3. Run your AI coder (in Prowl's terminal or your own)
+         |
+4. Watch files light up as they change
+         |
+5. Curious about something? Ask Prowl's chat
+```
+
+---
+
+## Why You Need This
+
+You're shipping with AI writing most of the code. Claude, Codex, or Gemini running in your terminal. Files appearing, changing, disappearing. You're watching text scroll by, hoping nothing breaks.
+
+**Prowl gives you the picture.**
+
+| Without Prowl | With Prowl |
+|---------------|------------|
+| Staring at terminal output, guessing what changed | See files light up on a map in real time |
+| Asking your AI coder "what does this file do?" (wasting tokens) | Ask Prowl instead — it knows your whole codebase |
+| Searching through folders for "the thing that handles login" | The map shows connections, the chat finds it instantly |
+| No idea if the AI broke something | See which files were touched and how they connect |
+| Want to look at a GitHub repo before cloning | Paste the URL into Prowl and browse it visually |
 
 ---
 
 ## Features
 
-### Core
-
-| Feature | Description |
-|---------|-------------|
-| **Live Graph** | Files, functions, classes rendered as nodes. Updates in real time as files change. |
-| **Built-in Terminal** | Run your AI coder here. Multiple tabs. Watch the graph while it works. |
-| **Code Editor** | Click any node to view or edit. Monaco-powered. |
-| **Codebase Chat** | Ask questions about your code. Doesn't touch your main coder's context. |
-| **Semantic Embeddings** | On-device vector embeddings via Snowflake Arctic Embed XS. WebGPU accelerated with WASM fallback. |
-
-### Detection
-
-Four layers running in parallel:
-
-| Layer | What it catches |
-|-------|-----------------|
-| Filesystem watcher | File writes, additions, removals |
-| Claude Code log parser | Structured tool events from JSONL logs |
-| Process monitor | Which processes have files open |
-| WebSocket client | OpenClaw workspace events |
-
-### Chat Tools
-
-| Tool | Purpose |
-|------|---------|
-| Hybrid search | BM25 + semantic embeddings + rank fusion |
-| Cypher queries | Query the graph database directly |
-| Regex grep | Pattern search across files |
-| File reader | Read file contents with fuzzy path matching |
-| Overview | High-level codebase map with clusters and dependencies |
-| Explore | Drill into symbols, clusters, or processes |
-| Impact analysis | Multi-depth upstream/downstream dependency tracing |
-
-### Other
-
-| Feature | Description |
-|---------|-------------|
-| **GitHub import** | Paste a repo URL, explore without cloning |
-| **ZIP support** | Drag and drop archives |
-| **Community detection** | Louvain algorithm clusters related code |
-| **Process tracing** | Trace execution paths through call graphs |
-| **Snapshots** | Serialized with msgpackr, integrity verified via HMAC |
+- **Live graph** — Your entire project as an interactive map. Nodes light up as files change.
+- **Built-in terminal** — Run Claude Code, Aider, or any tool right inside Prowl.
+- **Ask questions** — Chat about your codebase without burning tokens in your main AI.
+- **Code viewer** — Click any node to read the code. Edit if you need to.
+- **GitHub import** — Paste a repo URL to explore it without cloning.
+- **Smart search** — Find code by meaning, not just keywords.
+- **Works offline** — Everything runs locally on your machine. No data leaves your computer.
 
 ---
 
-## Quick Start
+## Download & Install
 
-### Prerequisites
+Go to the **[Releases page](https://github.com/neur0map/prowl/releases/latest)** and download the right file for your system:
 
-- **Node.js** 18+
-- **Python** 3.x with `setuptools` (needed for native module compilation)
-- **Git**
+| System | File to download |
+|--------|------------------|
+| Mac (Apple Silicon — M1/M2/M3/M4) | `Prowl-x.x.x-mac-arm64.dmg` |
+| Mac (Intel) | `Prowl-x.x.x-mac-x64.dmg` |
+| Windows | `Prowl-x.x.x-win-x64-setup.exe` |
+| Linux | `Prowl-x.x.x-linux-x86_64.AppImage` or `.deb` |
 
-### Development
+### macOS first launch
+
+The app isn't code-signed yet, so macOS will block it. To open it:
+
+1. **Drag Prowl to Applications** like any other app
+2. **Right-click** the app and choose **Open**
+3. Click **Open** in the dialog that appears
+4. macOS will ask about **keychain access** — click **Always Allow** (this stores your settings securely)
+
+That's it. You only need to do this once.
+
+> Code signing is coming soon. Once signed, these steps won't be needed.
+
+---
+
+## Getting Started
+
+1. **Open Prowl**
+2. **Drop a folder** onto the window (or click to browse)
+3. **Wait a few seconds** while Prowl maps your project
+4. **Explore the graph** — zoom, pan, click on nodes
+5. **Open the terminal tab** and start your AI coder
+6. **Watch the graph** update as your AI makes changes
+
+You can also paste a **GitHub URL** to explore any public repo without downloading it.
+
+---
+
+## Supported Languages
+
+JavaScript, TypeScript, Python, Java, Go, Rust, C, C++, C#
+
+---
+
+## AI Chat Providers
+
+Prowl's built-in chat works with:
+
+**OpenAI** · **Anthropic** · **Google Gemini** · **Azure OpenAI** · **Ollama** (local) · **OpenRouter** · **Groq**
+
+Set up your API key in Settings. Keys are stored securely in your system's keychain.
+
+---
+
+## Screenshots
+
+### Focus Graph
+<img src="public/media/focus-graph.png" alt="Focus Graph" width="700" />
+
+### Code Inspector
+<img src="public/media/code.png" alt="Code Inspector" width="700" />
+
+---
+
+<details>
+<summary><strong>For Developers</strong></summary>
+
+### Building from Source
+
+**Prerequisites:** Node.js 18+, Python 3.x with setuptools, Git
 
 ```bash
 git clone https://github.com/neur0map/prowl.git
@@ -124,116 +159,24 @@ npm install
 npm run dev
 ```
 
-This starts the Electron app with hot reload.
-
----
-
-## The Workflow
-
-```
-1. Open your project in Prowl
-          ↓
-2. Launch your AI coder in the built-in terminal
-          ↓
-3. Watch nodes pulse as files change
-          ↓
-4. Need context? Ask Prowl's chat (saves tokens)
-          ↓
-5. Found the file? Copy path → feed to your AI
-          ↓
-6. Quick fix? Edit directly in Prowl
-```
-
----
-
-## Loading a Codebase
-
-| Method | How |
-|--------|-----|
-| Local folder | Pick a directory, Prowl parses and watches |
-| GitHub URL | Paste URL, explore without cloning |
-| ZIP file | Drag and drop |
-
-Prowl uses tree-sitter to extract symbols and builds a graph database (KuzuDB) you can query with Cypher.
-
----
-
-## Supported Languages
-
-| Language | Status |
-|----------|--------|
-| JavaScript | Supported |
-| TypeScript | Supported |
-| Python | Supported |
-| Java | Supported |
-| Go | Supported |
-| Rust | Supported |
-| C | Supported |
-| C++ | Supported |
-| C# | Supported |
-
----
-
-## LLM Providers
-
-| Provider | Support |
-|----------|---------|
-| OpenAI | Supported |
-| Anthropic | Supported |
-| Google Gemini | Supported |
-| Azure OpenAI | Supported |
-| Ollama | Supported |
-| OpenRouter | Supported |
-| Groq | Supported |
-
-API keys stored securely via OS keychain (Electron safeStorage).
-
----
-
-## Building
+### Packaging
 
 ```bash
-npm run build          # compile TypeScript + bundle for production
-npm run dist:mac       # build + package macOS DMG
-npm run dist:win       # build + package Windows installer
-npm run dist:linux     # build + package Linux AppImage/deb
-npm run dist           # build + package all platforms
-npm run pack           # build + package (unpacked dir, for testing)
+npm run dist:mac       # macOS DMG
+npm run dist:win       # Windows installer
+npm run dist:linux     # Linux AppImage/deb
+npm run dist           # All platforms
 ```
-
-Built artifacts go to `release/`.
 
 ### Python note
 
-Native modules (`node-pty`, `msgpackr-extract`) require `node-gyp` which uses Python. If you're on Python 3.12+ and get a `ModuleNotFoundError: No module named 'distutils'` error, install setuptools:
+If you're on Python 3.12+ and get a `distutils` error:
 
 ```bash
 pip3 install setuptools
 ```
 
----
-
-## Installation (unsigned builds)
-
-The app is not yet code-signed with an Apple Developer certificate. macOS will block it by default.
-
-### macOS — bypass Gatekeeper
-
-```bash
-xattr -cr /Applications/Prowl.app
-```
-
-Or: right-click the app > **Open** > click **Open** in the dialog.
-
-### macOS — keychain prompt
-
-On first launch, macOS will ask to access **"prowl Safe Storage"** in your keychain. This is used to encrypt the snapshot integrity key. Click **Always Allow** to suppress future prompts.
-
-> **Coming soon:** Code-signed and notarized macOS builds. Once signed, both the Gatekeeper warning and the keychain authenticity prompt will disappear automatically.
-
----
-
-## Tech Stack
+### Tech Stack
 
 | Category | Technology |
 |----------|------------|
@@ -242,11 +185,13 @@ On first launch, macOS will ask to access **"prowl Safe Storage"** in your keych
 | Graph | Sigma.js, graphology |
 | Parsing | tree-sitter WASM |
 | Database | KuzuDB WASM |
-| Embeddings | Snowflake Arctic Embed XS (Transformers.js, WebGPU/WASM) |
+| Embeddings | Snowflake Arctic Embed XS (WebGPU/WASM) |
 | AI | LangChain |
 | Terminal | xterm.js, node-pty |
 | Editor | Monaco |
 | Build | electron-vite |
+
+</details>
 
 ---
 
