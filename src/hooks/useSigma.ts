@@ -75,17 +75,19 @@ interface UseSigmaReturn {
 }
 
 const OVERLAP_CLEANUP = {
-  maxIterations: 150,
-  ratio: 2,
-  margin: 25,
-  expansion: 1.3,
+  maxIterations: 200,
+  ratio: 3,
+  margin: 45,
+  expansion: 1.6,
 };
 
+const SETTLE_MS = 800;
+
 const FA2_TIERS = [
-  { ceiling: 500,   gravity: 0.02,  scaling: 150, slow: 8,  bhTheta: 0.5 },
-  { ceiling: 2000,  gravity: 0.015, scaling: 200, slow: 10, bhTheta: 0.5 },
-  { ceiling: 10000, gravity: 0.01,  scaling: 300, slow: 12, bhTheta: 0.8 },
-  { ceiling: Infinity, gravity: 0.005, scaling: 400, slow: 15, bhTheta: 0.8 },
+  { ceiling: 500,   gravity: 0.015, scaling: 250, slow: 8,  bhTheta: 0.5 },
+  { ceiling: 2000,  gravity: 0.01,  scaling: 350, slow: 10, bhTheta: 0.5 },
+  { ceiling: 10000, gravity: 0.008, scaling: 500, slow: 12, bhTheta: 0.8 },
+  { ceiling: Infinity, gravity: 0.004, scaling: 600, slow: 15, bhTheta: 0.8 },
 ];
 
 function pickFA2Settings(nodeCount: number) {
@@ -575,11 +577,30 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
       if (fa2Ref.current) {
         fa2Ref.current.stop();
         fa2Ref.current = null;
+
+        // Freeze positions at moment of stop
+        const frozen: Record<string, { x: number; y: number }> = {};
+        graph.forEachNode((nid, attrs) => { frozen[nid] = { x: attrs.x, y: attrs.y }; });
+
+        // Compute final rested positions with noverlap
         noverlap.assign(graph, OVERLAP_CLEANUP);
-        // Capture rest positions for magnetic repel
         const restMap = new Map<string, { x: number; y: number }>();
         graph.forEachNode((nid, attrs) => restMap.set(nid, { x: attrs.x, y: attrs.y }));
         restPositionsRef.current = restMap;
+
+        // Restore frozen positions so the ease-out starts from where FA2 left off
+        graph.forEachNode((nid) => {
+          const p = frozen[nid];
+          if (p) { graph.setNodeAttribute(nid, 'x', p.x); graph.setNodeAttribute(nid, 'y', p.y); }
+        });
+
+        // Smooth settle into rest positions
+        const targets: Record<string, { x: number; y: number }> = {};
+        restMap.forEach((pos, nid) => { targets[nid] = pos; });
+        cancelRepelRef.current = animateNodes(graph, targets, {
+          duration: SETTLE_MS, easing: 'quadraticOut',
+        });
+
         sigmaRef.current?.refresh();
         setLayoutActive(false);
       }
@@ -647,11 +668,29 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
       fa2Ref.current = null;
       const g = graphRef.current;
       if (g) {
+        // Freeze positions at moment of stop
+        const frozen: Record<string, { x: number; y: number }> = {};
+        g.forEachNode((nid, attrs) => { frozen[nid] = { x: attrs.x, y: attrs.y }; });
+
+        // Compute final rested positions with noverlap
         noverlap.assign(g, OVERLAP_CLEANUP);
-        // Capture rest positions for magnetic repel
         const restMap = new Map<string, { x: number; y: number }>();
         g.forEachNode((nid, attrs) => restMap.set(nid, { x: attrs.x, y: attrs.y }));
         restPositionsRef.current = restMap;
+
+        // Restore frozen positions so the ease-out starts from where FA2 left off
+        g.forEachNode((nid) => {
+          const p = frozen[nid];
+          if (p) { g.setNodeAttribute(nid, 'x', p.x); g.setNodeAttribute(nid, 'y', p.y); }
+        });
+
+        // Smooth settle into rest positions
+        const targets: Record<string, { x: number; y: number }> = {};
+        restMap.forEach((pos, nid) => { targets[nid] = pos; });
+        cancelRepelRef.current = animateNodes(g, targets, {
+          duration: SETTLE_MS, easing: 'quadraticOut',
+        });
+
         sigmaRef.current?.refresh();
       }
       setLayoutActive(false);
