@@ -1,11 +1,11 @@
 /**
- * Uses an LLM to refine heuristic module labels into semantic names,
- * keywords, and descriptions. Supports per-cluster and batched strategies.
+ * Refines heuristic module labels into semantic names using
+ * an LLM. Supports individual and batched enrichment modes.
  */
 
-import { CommunityNode } from './community-processor';
+import type { CommunityNode } from './community-processor';
 
-// -- Types -------------------------------------------------------------------
+/* ── Data shapes ──────────────────────────────────────── */
 
 export interface ClusterEnrichment {
   name: string;
@@ -28,15 +28,12 @@ export interface ClusterMemberInfo {
   type: string;
 }
 
-// -- Prompt assembly ---------------------------------------------------------
+/* ── Internals ────────────────────────────────────────── */
 
-const composePrompt = (
-  items: ClusterMemberInfo[],
-  heuristic: string,
-): string => {
-  const capped = items.slice(0, 20);
-  const listing = capped.map((m) => `${m.name} (${m.type})`).join(', ');
-  const overflow = items.length > 20 ? ` (+${items.length - 20} more)` : '';
+function buildSinglePrompt(members: ClusterMemberInfo[], heuristic: string): string {
+  const capped = members.slice(0, 20);
+  const listing = capped.map(m => `${m.name} (${m.type})`).join(', ');
+  const overflow = members.length > 20 ? ` (+${members.length - 20} more)` : '';
 
   return [
     'Analyze this code cluster and provide a semantic name and short description.',
@@ -47,19 +44,13 @@ const composePrompt = (
     'Reply with JSON only:',
     '{"name": "2-4 word semantic name", "description": "One sentence describing purpose"}',
   ].join('\n');
-};
+}
 
-// -- Response decoding -------------------------------------------------------
-
-const decodeResponse = (
-  raw: string,
-  fallback: string,
-): ClusterEnrichment => {
+function parseSingleResponse(raw: string, fallback: string): ClusterEnrichment {
   try {
-    const fragment = raw.match(/\{[\s\S]*\}/);
-    if (!fragment) throw new Error('No JSON found in response');
-
-    const obj = JSON.parse(fragment[0]);
+    const json = raw.match(/\{[\s\S]*\}/);
+    if (!json) throw new Error('no JSON object in response');
+    const obj = JSON.parse(json[0]);
     return {
       name: obj.name || fallback,
       keywords: Array.isArray(obj.keywords) ? obj.keywords : [],
@@ -68,143 +59,120 @@ const decodeResponse = (
   } catch {
     return { name: fallback, keywords: [], description: '' };
   }
-};
+}
 
-/** Rough token estimate: character count divided by four. */
-const estimateTokens = (text: string): number => Math.ceil(text.length / 4);
+function roughTokenCount(text: string): number {
+  return Math.ceil(text.length / 4);
+}
 
-/** Default enrichment using only the heuristic label. */
-const fallbackEnrichment = (label: string): ClusterEnrichment => ({
-  name: label,
-  keywords: [],
-  description: '',
-});
+function defaultEnrichment(label: string): ClusterEnrichment {
+  return { name: label, keywords: [], description: '' };
+}
 
-// -- Per-cluster enrichment --------------------------------------------------
+/* ── Individual enrichment ────────────────────────────── */
 
 /**
- * Enrich each module one at a time with individual LLM calls.
+ * Enrich each cluster one at a time via individual LLM calls.
  */
-export const enrichClusters = async (
+export async function enrichClusters(
   communities: CommunityNode[],
   memberMap: Map<string, ClusterMemberInfo[]>,
   llmClient: LLMClient,
   onProgress?: (current: number, total: number) => void,
-): Promise<EnrichmentResult> => {
-  const results = new Map<string, ClusterEnrichment>();
-  let tokenAccum = 0;
+): Promise<EnrichmentResult> {
+  const out = new Map<string, ClusterEnrichment>();
+  let tokens = 0;
 
-  let position = 0;
-  for (const comm of communities) {
-    position++;
-    onProgress?.(position, communities.length);
+  for (let i = 0; i < communities.length; i++) {
+    const comm = communities[i];
+    onProgress?.(i + 1, communities.length);
 
     const members = memberMap.get(comm.id) ?? [];
-
     if (members.length === 0) {
-      results.set(comm.id, fallbackEnrichment(comm.heuristicLabel));
+      out.set(comm.id, defaultEnrichment(comm.heuristicLabel));
       continue;
     }
 
     try {
-      const promptText = composePrompt(members, comm.heuristicLabel);
-      const reply = await llmClient.generate(promptText);
-
-      tokenAccum += estimateTokens(promptText) + estimateTokens(reply);
-
-      results.set(comm.id, decodeResponse(reply, comm.heuristicLabel));
+      const prompt = buildSinglePrompt(members, comm.heuristicLabel);
+      const reply = await llmClient.generate(prompt);
+      tokens += roughTokenCount(prompt) + roughTokenCount(reply);
+      out.set(comm.id, parseSingleResponse(reply, comm.heuristicLabel));
     } catch (err) {
-      console.warn(`Failed to enrich cluster ${comm.id}:`, err);
-      results.set(comm.id, fallbackEnrichment(comm.heuristicLabel));
+      console.warn(`[prowl:enrich] failed for ${comm.id}`, err);
+      out.set(comm.id, defaultEnrichment(comm.heuristicLabel));
     }
   }
 
-  return { enrichments: results, tokensUsed: tokenAccum };
-};
+  return { enrichments: out, tokensUsed: tokens };
+}
 
-// -- Batched enrichment ------------------------------------------------------
+/* ── Batched enrichment ───────────────────────────────── */
 
 /**
- * Label multiple modules per LLM call for higher throughput.
- * Falls back to heuristic labels when the response cannot be parsed.
+ * Send multiple clusters per LLM call for higher throughput.
+ * Falls back to heuristic labels on parse failure.
  */
-export const labelModulesBatch = async (
+export async function labelModulesBatch(
   communities: CommunityNode[],
   memberMap: Map<string, ClusterMemberInfo[]>,
   llmClient: LLMClient,
-  batchSize: number = 5,
+  batchSize = 5,
   onProgress?: (current: number, total: number) => void,
-): Promise<EnrichmentResult> => {
-  const results = new Map<string, ClusterEnrichment>();
-  let tokenAccum = 0;
+): Promise<EnrichmentResult> {
+  const out = new Map<string, ClusterEnrichment>();
+  let tokens = 0;
 
-  let cursor = 0;
-  while (cursor < communities.length) {
-    const chunk = communities.slice(cursor, cursor + batchSize);
-    cursor += batchSize;
+  for (let offset = 0; offset < communities.length; offset += batchSize) {
+    const chunk = communities.slice(offset, offset + batchSize);
+    onProgress?.(Math.min(offset + batchSize, communities.length), communities.length);
 
-    onProgress?.(Math.min(cursor, communities.length), communities.length);
-
-    // Assemble a multi-cluster prompt for this chunk
-    const segments = chunk.map((comm, localIdx) => {
-      const members = memberMap.get(comm.id) ?? [];
-      const capped = members.slice(0, 15);
-      const listing = capped.map((m) => `${m.name} (${m.type})`).join(', ');
-
+    const blocks = chunk.map((comm, idx) => {
+      const members = (memberMap.get(comm.id) ?? []).slice(0, 15);
+      const listing = members.map(m => `${m.name} (${m.type})`).join(', ');
       return [
-        `Cluster ${localIdx + 1} (id: ${comm.id}):`,
+        `Cluster ${idx + 1} (id: ${comm.id}):`,
         `Heuristic: "${comm.heuristicLabel}"`,
         `Members: ${listing}`,
       ].join('\n');
     });
 
-    const fullPrompt = [
+    const prompt = [
       'Analyze these code clusters and generate semantic names, keywords, and descriptions.',
-      '',
-      segments.join('\n\n'),
-      '',
+      '', ...blocks.join('\n\n').split('\n'), '',
       'Output JSON array:',
-      '[',
-      '  {"id": "comm_X", "name": "...", "keywords": [...], "description": "..."},',
-      '  ...',
-      ']',
+      '[{"id": "comm_X", "name": "...", "keywords": [...], "description": "..."}, ...]',
     ].join('\n');
 
     try {
-      const reply = await llmClient.generate(fullPrompt);
-      tokenAccum += estimateTokens(fullPrompt) + estimateTokens(reply);
+      const reply = await llmClient.generate(prompt);
+      tokens += roughTokenCount(prompt) + roughTokenCount(reply);
 
-      const arrayFragment = reply.match(/\[[\s\S]*\]/);
-      if (arrayFragment) {
-        const items = JSON.parse(arrayFragment[0]) as Array<{
-          id: string;
-          name: string;
-          keywords: string[];
-          description: string;
+      const arr = reply.match(/\[[\s\S]*\]/);
+      if (arr) {
+        const items = JSON.parse(arr[0]) as Array<{
+          id: string; name: string; keywords: string[]; description: string;
         }>;
-
-        for (const entry of items) {
-          results.set(entry.id, {
-            name: entry.name,
-            keywords: entry.keywords ?? [],
-            description: entry.description ?? '',
+        for (const item of items) {
+          out.set(item.id, {
+            name: item.name,
+            keywords: item.keywords ?? [],
+            description: item.description ?? '',
           });
         }
       }
     } catch (err) {
-      console.warn('Module labelling batch failed; using heuristic fallbacks:', err);
+      console.warn('[prowl:enrich] batch failed, using defaults', err);
       for (const comm of chunk) {
-        results.set(comm.id, fallbackEnrichment(comm.heuristicLabel));
+        out.set(comm.id, defaultEnrichment(comm.heuristicLabel));
       }
     }
   }
 
-  // Fill in any missing communities with heuristic defaults
+  /* Backfill any gaps */
   for (const comm of communities) {
-    if (!results.has(comm.id)) {
-      results.set(comm.id, fallbackEnrichment(comm.heuristicLabel));
-    }
+    if (!out.has(comm.id)) out.set(comm.id, defaultEnrichment(comm.heuristicLabel));
   }
 
-  return { enrichments: results, tokensUsed: tokenAccum };
-};
+  return { enrichments: out, tokensUsed: tokens };
+}

@@ -1,16 +1,14 @@
 /**
- * Execution-flow detection.
- *
- * Finds feature flows by ranking entry points, tracing CALLS edges
- * via bounded BFS, deduplicating overlapping traces, and emitting
- * labelled Process nodes with step metadata.
+ * Detects execution flows by ranking entry points, tracing
+ * forward CALLS edges via bounded BFS, pruning overlapping
+ * traces, and emitting Process nodes with step metadata.
  */
 
-import { CodeGraph, GraphNode, GraphRelationship, NodeLabel } from '../graph/types';
-import { CommunityMembership } from './community-processor';
+import type { CodeGraph, GraphNode, GraphRelationship, NodeLabel } from '../graph/types';
+import type { CommunityMembership } from './community-processor';
 import { calculateEntryPointScore, isTestFile } from './entry-point-scoring';
 
-// -- Configuration -----------------------------------------------------------
+/* ── Tuning knobs ─────────────────────────────────────── */
 
 export interface ProcessDetectionConfig {
   maxTraceDepth: number;
@@ -19,14 +17,14 @@ export interface ProcessDetectionConfig {
   minSteps: number;
 }
 
-const DEFAULT_CONFIG: ProcessDetectionConfig = {
+const DEFAULTS: ProcessDetectionConfig = {
   maxTraceDepth: 10,
   maxBranching: 4,
   maxProcesses: 75,
   minSteps: 2,
 };
 
-// -- Public result types -----------------------------------------------------
+/* ── Public result shapes ─────────────────────────────── */
 
 export interface ProcessNode {
   id: string;
@@ -57,239 +55,183 @@ export interface ProcessDetectionResult {
   };
 }
 
-// -- Adjacency helpers -------------------------------------------------------
+/* ── Adjacency construction ───────────────────────────── */
 
-type Neighbours = Map<string, string[]>;
+type AdjList = Map<string, string[]>;
 
-/** Forward adjacency from CALLS edges. */
-const forwardAdjacency = (kg: CodeGraph): Neighbours => {
-  const fwd: Neighbours = new Map();
-  for (const rel of kg.relationships) {
-    if (rel.type !== 'CALLS') continue;
-    const existing = fwd.get(rel.sourceId);
-    if (existing) {
-      existing.push(rel.targetId);
-    } else {
-      fwd.set(rel.sourceId, [rel.targetId]);
-    }
+function buildForwardAdj(cg: CodeGraph): AdjList {
+  const adj: AdjList = new Map();
+  for (const r of cg.relationships) {
+    if (r.type !== 'CALLS') continue;
+    const list = adj.get(r.sourceId);
+    if (list) list.push(r.targetId);
+    else adj.set(r.sourceId, [r.targetId]);
   }
-  return fwd;
-};
+  return adj;
+}
 
-/** Reverse adjacency from CALLS edges. */
-const reverseAdjacency = (kg: CodeGraph): Neighbours => {
-  const rev: Neighbours = new Map();
-  for (const rel of kg.relationships) {
-    if (rel.type !== 'CALLS') continue;
-    const existing = rev.get(rel.targetId);
-    if (existing) {
-      existing.push(rel.sourceId);
-    } else {
-      rev.set(rel.targetId, [rel.sourceId]);
-    }
+function buildReverseAdj(cg: CodeGraph): AdjList {
+  const adj: AdjList = new Map();
+  for (const r of cg.relationships) {
+    if (r.type !== 'CALLS') continue;
+    const list = adj.get(r.targetId);
+    if (list) list.push(r.sourceId);
+    else adj.set(r.targetId, [r.sourceId]);
   }
-  return rev;
-};
+  return adj;
+}
 
-// -- Entry-point ranking -----------------------------------------------------
+/* ── Entry-point ranking ──────────────────────────────── */
 
-const rankEntryPoints = (
-  kg: CodeGraph,
-  fwd: Neighbours,
-  rev: Neighbours,
-): string[] => {
+function rankSeeds(cg: CodeGraph, fwd: AdjList, rev: AdjList): string[] {
   const eligible = new Set<NodeLabel>(['Function', 'Method']);
+  const scored: Array<{ id: string; value: number }> = [];
 
-  const scored: Array<{ nid: string; value: number; tags: string[] }> = [];
-
-  for (const node of kg.nodes) {
-    if (!eligible.has(node.label)) continue;
-
-    const fp = node.properties.filePath ?? '';
+  for (const n of cg.nodes) {
+    if (!eligible.has(n.label)) continue;
+    const fp = n.properties.filePath ?? '';
     if (isTestFile(fp)) continue;
 
-    const outgoing = fwd.get(node.id) ?? [];
-    if (outgoing.length === 0) continue;
+    const out = fwd.get(n.id) ?? [];
+    if (out.length === 0) continue;
+    const inc = rev.get(n.id) ?? [];
 
-    const incoming = rev.get(node.id) ?? [];
-
-    const { score, reasons } = calculateEntryPointScore(
-      node.properties.name,
-      node.properties.language ?? 'javascript',
-      node.properties.isExported ?? false,
-      incoming.length,
-      outgoing.length,
+    const { score } = calculateEntryPointScore(
+      n.properties.name,
+      n.properties.language ?? 'javascript',
+      n.properties.isExported ?? false,
+      inc.length,
+      out.length,
       fp,
     );
-
-    if (score > 0) {
-      scored.push({ nid: node.id, value: score, tags: reasons });
-    }
+    if (score > 0) scored.push({ id: n.id, value: score });
   }
 
   scored.sort((a, b) => b.value - a.value);
+  return scored.slice(0, 200).map(s => s.id);
+}
 
-  return scored.slice(0, 200).map((s) => s.nid);
-};
+/* ── BFS trace ────────────────────────────────────────── */
 
-// -- BFS trace ---------------------------------------------------------------
-
-/** BFS forward from a single entry point, returning bounded paths. */
-const explorePaths = (
+function traceForward(
   origin: string,
-  fwd: Neighbours,
+  fwd: AdjList,
   cfg: ProcessDetectionConfig,
-): string[][] => {
-  const collected: string[][] = [];
+): string[][] {
+  const paths: string[][] = [];
+  const queue: Array<[string, string[]]> = [[origin, [origin]]];
 
-  // [current node, path so far]
-  const frontier: Array<[string, string[]]> = [[origin, [origin]]];
+  while (queue.length > 0 && paths.length < cfg.maxBranching * 3) {
+    const [cur, trail] = queue.shift()!;
+    const next = fwd.get(cur) ?? [];
 
-  while (frontier.length > 0 && collected.length < cfg.maxBranching * 3) {
-    const [cur, trail] = frontier.shift()!;
-    const targets = fwd.get(cur) ?? [];
-
-    if (targets.length === 0) {
-      // Leaf -- emit if long enough
-      if (trail.length >= cfg.minSteps) collected.push(trail.slice());
+    if (next.length === 0 || trail.length >= cfg.maxTraceDepth) {
+      if (trail.length >= cfg.minSteps) paths.push([...trail]);
       continue;
     }
 
-    if (trail.length >= cfg.maxTraceDepth) {
-      if (trail.length >= cfg.minSteps) collected.push(trail.slice());
-      continue;
-    }
-
-    const bounded = targets.slice(0, cfg.maxBranching);
     let extended = false;
-
-    for (const tgt of bounded) {
-      if (trail.indexOf(tgt) === -1) {
-        frontier.push([tgt, [...trail, tgt]]);
+    for (const tgt of next.slice(0, cfg.maxBranching)) {
+      if (!trail.includes(tgt)) {
+        queue.push([tgt, [...trail, tgt]]);
         extended = true;
       }
     }
-
-    // Cycle detected -- treat as terminal
-    if (!extended && trail.length >= cfg.minSteps) {
-      collected.push(trail.slice());
-    }
+    if (!extended && trail.length >= cfg.minSteps) paths.push([...trail]);
   }
 
-  return collected;
-};
+  return paths;
+}
 
-// -- Trace deduplication -----------------------------------------------------
+/* ── Deduplication ────────────────────────────────────── */
 
-/** Remove traces subsumed by longer ones. */
-const removeRedundantTraces = (raw: string[][]): string[][] => {
+function pruneSubsumed(raw: string[][]): string[][] {
   if (raw.length === 0) return [];
-
-  const descending = [...raw].sort((a, b) => b.length - a.length);
+  const sorted = [...raw].sort((a, b) => b.length - a.length);
   const kept: string[][] = [];
 
-  for (const candidate of descending) {
-    const key = candidate.join('->');
-    const subsumed = kept.some((existing) => existing.join('->').includes(key));
-    if (!subsumed) kept.push(candidate);
+  for (const candidate of sorted) {
+    const sig = candidate.join('->');
+    if (!kept.some(k => k.join('->').includes(sig))) kept.push(candidate);
   }
-
   return kept;
-};
+}
 
-// -- String utilities --------------------------------------------------------
+/* ── String helpers ───────────────────────────────────── */
 
-const titleCase = (s: string): string =>
-  s.length === 0 ? s : s[0].toUpperCase() + s.substring(1);
+function capitalize(s: string): string {
+  return s.length === 0 ? s : s[0].toUpperCase() + s.substring(1);
+}
 
-const toSafeId = (s: string): string =>
-  s.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20).toLowerCase();
+function safeId(s: string): string {
+  return s.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20).toLowerCase();
+}
 
-// -- Main processor ----------------------------------------------------------
+/* ── Main processor ───────────────────────────────────── */
 
-export const processProcesses = async (
+export async function processProcesses(
   codeGraph: CodeGraph,
   memberships: CommunityMembership[],
   onProgress?: (message: string, progress: number) => void,
   config: Partial<ProcessDetectionConfig> = {},
-): Promise<ProcessDetectionResult> => {
-  const cfg: ProcessDetectionConfig = { ...DEFAULT_CONFIG, ...config };
+): Promise<ProcessDetectionResult> {
+  const cfg: ProcessDetectionConfig = { ...DEFAULTS, ...config };
 
-  onProgress?.('Finding entry points...', 0);
+  onProgress?.('Ranking entry points...', 0);
 
-  // Map nodes to their community
-  const communityOf = new Map<string, string>();
-  for (const m of memberships) communityOf.set(m.nodeId, m.communityId);
+  const commOf = new Map<string, string>();
+  for (const m of memberships) commOf.set(m.nodeId, m.communityId);
 
-  // Adjacency maps
-  const fwd = forwardAdjacency(codeGraph);
-  const rev = reverseAdjacency(codeGraph);
+  const fwd = buildForwardAdj(codeGraph);
+  const rev = buildReverseAdj(codeGraph);
+  const nodeIndex = new Map<string, GraphNode>();
+  for (const n of codeGraph.nodes) nodeIndex.set(n.id, n);
 
-  // Node lookup
-  const nodeById = new Map<string, GraphNode>();
-  for (const n of codeGraph.nodes) nodeById.set(n.id, n);
+  const seeds = rankSeeds(codeGraph, fwd, rev);
+  onProgress?.(`Tracing flows from ${seeds.length} seeds...`, 20);
 
-  // Score and rank entry points
-  const seeds = rankEntryPoints(codeGraph, fwd, rev);
-
-  onProgress?.(`Found ${seeds.length} entry points, tracing flows...`, 20);
-
-  onProgress?.(`Found ${seeds.length} entry points, tracing flows...`, 20);
-
-  // Trace forward from each seed
+  /* Collect traces */
   const rawTraces: string[][] = [];
-  const traceLimit = cfg.maxProcesses * 2;
+  const cap = cfg.maxProcesses * 2;
 
-  for (let idx = 0; idx < seeds.length && rawTraces.length < traceLimit; idx++) {
-    const paths = explorePaths(seeds[idx], fwd, cfg);
-
-    for (const p of paths) {
+  for (let i = 0; i < seeds.length && rawTraces.length < cap; i++) {
+    for (const p of traceForward(seeds[i], fwd, cfg)) {
       if (p.length >= cfg.minSteps) rawTraces.push(p);
     }
-
-    if (idx % 10 === 0) {
-      const pct = 20 + (idx / seeds.length) * 40;
-      onProgress?.(`Tracing entry point ${idx + 1}/${seeds.length}...`, pct);
+    if (i % 10 === 0) {
+      onProgress?.(`Traced seed ${i + 1}/${seeds.length}...`, 20 + (i / seeds.length) * 40);
     }
   }
 
-  onProgress?.(`Found ${rawTraces.length} traces, deduplicating...`, 60);
+  onProgress?.(`Pruning ${rawTraces.length} traces...`, 60);
 
-  const deduped = removeRedundantTraces(rawTraces);
-
-  // Retain the longest traces, capped at maxProcesses
-  const finalTraces = deduped
+  const unique = pruneSubsumed(rawTraces)
     .sort((a, b) => b.length - a.length)
     .slice(0, cfg.maxProcesses);
 
-  onProgress?.(`Creating ${finalTraces.length} process nodes...`, 80);
+  onProgress?.(`Building ${unique.length} process nodes...`, 80);
 
-  // Build Process nodes and step records
+  /* Assemble output */
   const processes: ProcessNode[] = [];
   const steps: ProcessStep[] = [];
 
-  finalTraces.forEach((trace, seqNum) => {
+  for (let seq = 0; seq < unique.length; seq++) {
+    const trace = unique[seq];
     const headId = trace[0];
     const tailId = trace[trace.length - 1];
 
-    // Collect distinct communities along the trace
-    const touchedComms = new Set<string>();
+    const comms = new Set<string>();
     for (const nid of trace) {
-      const c = communityOf.get(nid);
-      if (c) touchedComms.add(c);
+      const c = commOf.get(nid);
+      if (c) comms.add(c);
     }
-    const commList = Array.from(touchedComms);
+    const commList = [...comms];
+    const kind: ProcessNode['processType'] = commList.length > 1 ? 'cross_community' : 'intra_community';
 
-    const kind: 'intra_community' | 'cross_community' =
-      commList.length > 1 ? 'cross_community' : 'intra_community';
-
-    const headNode = nodeById.get(headId);
-    const tailNode = nodeById.get(tailId);
-    const headName = headNode?.properties.name ?? 'Unknown';
-    const tailName = tailNode?.properties.name ?? 'Unknown';
-    const tag = `${titleCase(headName)} → ${titleCase(tailName)}`;
-
-    const pid = `proc_${seqNum}_${toSafeId(headName)}`;
+    const headName = nodeIndex.get(headId)?.properties.name ?? 'Unknown';
+    const tailName = nodeIndex.get(tailId)?.properties.name ?? 'Unknown';
+    const tag = `${capitalize(headName)} \u2192 ${capitalize(tailName)}`;
+    const pid = `proc_${seq}_${safeId(headName)}`;
 
     processes.push({
       id: pid,
@@ -303,30 +245,28 @@ export const processProcesses = async (
       trace,
     });
 
-    trace.forEach((nid, pos) => {
-      steps.push({ nodeId: nid, processId: pid, step: pos + 1 });
-    });
-  });
+    for (let s = 0; s < trace.length; s++) {
+      steps.push({ nodeId: trace[s], processId: pid, step: s + 1 });
+    }
+  }
 
-  onProgress?.('Process detection complete!', 100);
+  onProgress?.('Flow detection done.', 100);
 
-  // Summary statistics
-  let crossCount = 0;
+  let crossN = 0;
   let totalSteps = 0;
   for (const p of processes) {
-    if (p.processType === 'cross_community') crossCount++;
+    if (p.processType === 'cross_community') crossN++;
     totalSteps += p.stepCount;
   }
-  const mean = processes.length > 0 ? totalSteps / processes.length : 0;
 
   return {
     processes,
     steps,
     stats: {
       totalProcesses: processes.length,
-      crossCommunityCount: crossCount,
-      avgStepCount: Math.round(mean * 10) / 10,
+      crossCommunityCount: crossN,
+      avgStepCount: processes.length > 0 ? Math.round((totalSteps / processes.length) * 10) / 10 : 0,
       entryPointsFound: seeds.length,
     },
   };
-};
+}

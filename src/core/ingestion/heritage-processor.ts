@@ -1,107 +1,98 @@
 /**
- * Creates EXTENDS and IMPLEMENTS edges for class/struct/trait
- * inheritance and interface conformance.
+ * Materialises EXTENDS and IMPLEMENTS edges by scanning
+ * class/struct/trait heritage clauses in the AST.
  */
 
-import { CodeGraph } from '../graph/types';
-import { ASTCache } from './ast-cache';
-import { SymbolTable } from './symbol-table';
+import type { CodeGraph } from '../graph/types';
+import type { ASTCache } from './ast-cache';
+import type { SymbolTable } from './symbol-table';
 import { loadParser, loadLanguage } from '../tree-sitter/parser-loader';
 import { LANGUAGE_QUERIES } from './tree-sitter-queries';
 import { generateId } from '../../lib/utils';
 import { getLanguageFromFilename } from './utils';
 
-/** Resolve a symbol to a node ID (exact match first, then fuzzy global). */
-const resolveSymbol = (
+/* Locate a node ID first via scoped lookup, then global, then fabricate one. */
+function pinpointNode(
   symbols: SymbolTable,
-  filePath: string,
+  file: string,
   name: string,
-  fallbackLabel: string
-): string => {
-  const exactHit = symbols.lookupExact(filePath, name);
-  if (exactHit) return exactHit;
+  fallbackTag: string,
+): string {
+  const scoped = symbols.lookupExact(file, name);
+  if (scoped) return scoped;
 
-  const fuzzyHits = symbols.lookupFuzzy(name);
-  if (fuzzyHits.length > 0) return fuzzyHits[0].nodeId;
+  const global = symbols.lookupFuzzy(name);
+  if (global.length > 0) return global[0].nodeId;
 
-  return generateId(fallbackLabel, filePath ? `${filePath}:${name}` : name);
-};
+  return generateId(fallbackTag, file ? `${file}:${name}` : name);
+}
 
-/** Resolve an external parent/trait via fuzzy global lookup, or generate an ID. */
-const resolveExternalSymbol = (
+/* Global-only lookup when the parent type lives in another file. */
+function findGlobalNode(
   symbols: SymbolTable,
   name: string,
-  fallbackLabel: string
-): string => {
+  fallbackTag: string,
+): string {
   const hits = symbols.lookupFuzzy(name);
-  return hits.length > 0 ? hits[0].nodeId : generateId(fallbackLabel, name);
-};
+  return hits.length > 0 ? hits[0].nodeId : generateId(fallbackTag, name);
+}
 
-export const processHeritage = async (
+export async function processHeritage(
   graph: CodeGraph,
   files: { path: string; content: string }[],
   astCache: ASTCache,
   symbolTable: SymbolTable,
-  onProgress?: (current: number, total: number) => void
-) => {
+  onProgress?: (current: number, total: number) => void,
+): Promise<void> {
   const parser = await loadParser();
-  const totalEntries = files.length;
 
-  let pos = 0;
-  while (pos < totalEntries) {
-    const entry = files[pos];
-    onProgress?.(pos + 1, totalEntries);
+  for (let i = 0; i < files.length; i++) {
+    const src = files[i];
+    onProgress?.(i + 1, files.length);
 
-    const lang = getLanguageFromFilename(entry.path);
-    if (!lang) { pos++; continue; }
+    const lang = getLanguageFromFilename(src.path);
+    if (!lang) continue;
 
-    const queryText = LANGUAGE_QUERIES[lang];
-    if (!queryText) { pos++; continue; }
+    const qText = LANGUAGE_QUERIES[lang];
+    if (!qText) continue;
 
-    await loadLanguage(lang, entry.path);
+    await loadLanguage(lang, src.path);
 
-    let syntaxTree = astCache.get(entry.path);
-    let disposable = false;
-    if (!syntaxTree) {
-      syntaxTree = parser.parse(entry.content);
-      disposable = true;
+    let tree = astCache.get(src.path);
+    let owned = false;
+    if (!tree) {
+      tree = parser.parse(src.content);
+      owned = true;
     }
 
-    let queryHandle;
-    let matchResults;
+    let matches: any[];
     try {
-      queryHandle = parser.getLanguage().query(queryText);
-      matchResults = queryHandle.matches(syntaxTree.rootNode);
+      const q = parser.getLanguage().query(qText);
+      matches = q.matches(tree.rootNode);
     } catch (err) {
-      console.warn(`Heritage query error for ${entry.path}:`, err);
-      if (disposable) syntaxTree.delete();
-      pos++;
+      console.warn(`[prowl:heritage] query failed for ${src.path}`, err);
+      if (owned) tree.delete();
       continue;
     }
 
-    for (const m of matchResults) {
-      const captured: Record<string, any> = {};
-      m.captures.forEach(cap => { captured[cap.name] = cap.node; });
+    for (const m of matches) {
+      const cap: Record<string, any> = {};
+      for (const c of m.captures) cap[c.name] = c.node;
 
-      const classNode = captured['heritage.class'];
-      const extendsNode = captured['heritage.extends'];
-      const implementsNode = captured['heritage.implements'];
-      const traitNode = captured['heritage.trait'];
+      const classN = cap['heritage.class'];
+      const extendsN = cap['heritage.extends'];
+      const implN = cap['heritage.implements'];
+      const traitN = cap['heritage.trait'];
 
-      // Inheritance: class/struct extends a base
-      if (classNode && extendsNode) {
-        const derivedName = classNode.text;
-        const baseName = extendsNode.text;
-
-        const derivedId = resolveSymbol(symbolTable, entry.path, derivedName, 'Class');
-        const baseId = resolveExternalSymbol(symbolTable, baseName, 'Class');
-
-        if (derivedId !== baseId) {
-          const edgeKey = generateId('EXTENDS', `${derivedId}->${baseId}`);
+      /* Inheritance: extends a base class/struct */
+      if (classN && extendsN) {
+        const childId = pinpointNode(symbolTable, src.path, classN.text, 'Class');
+        const parentId = findGlobalNode(symbolTable, extendsN.text, 'Class');
+        if (childId !== parentId) {
           graph.addRelationship({
-            id: edgeKey,
-            sourceId: derivedId,
-            targetId: baseId,
+            id: generateId('EXTENDS', `${childId}->${parentId}`),
+            sourceId: childId,
+            targetId: parentId,
             type: 'EXTENDS',
             confidence: 1.0,
             reason: '',
@@ -109,20 +100,15 @@ export const processHeritage = async (
         }
       }
 
-      // Conformance: class implements an interface
-      if (classNode && implementsNode) {
-        const typeName = classNode.text;
-        const contractName = implementsNode.text;
-
-        const typeId = resolveSymbol(symbolTable, entry.path, typeName, 'Class');
-        const contractId = resolveExternalSymbol(symbolTable, contractName, 'Interface');
-
-        if (typeId && contractId) {
-          const edgeKey = generateId('IMPLEMENTS', `${typeId}->${contractId}`);
+      /* Conformance: implements an interface */
+      if (classN && implN) {
+        const typeId = pinpointNode(symbolTable, src.path, classN.text, 'Class');
+        const ifaceId = findGlobalNode(symbolTable, implN.text, 'Interface');
+        if (typeId && ifaceId) {
           graph.addRelationship({
-            id: edgeKey,
+            id: generateId('IMPLEMENTS', `${typeId}->${ifaceId}`),
             sourceId: typeId,
-            targetId: contractId,
+            targetId: ifaceId,
             type: 'IMPLEMENTS',
             confidence: 1.0,
             reason: '',
@@ -130,18 +116,13 @@ export const processHeritage = async (
         }
       }
 
-      // Rust: impl Trait for Struct
-      if (traitNode && classNode) {
-        const concreteName = classNode.text;
-        const traitName = traitNode.text;
-
-        const concreteId = resolveSymbol(symbolTable, entry.path, concreteName, 'Struct');
-        const traitId = resolveExternalSymbol(symbolTable, traitName, 'Trait');
-
+      /* Rust: impl Trait for Type */
+      if (traitN && classN) {
+        const concreteId = pinpointNode(symbolTable, src.path, classN.text, 'Struct');
+        const traitId = findGlobalNode(symbolTable, traitN.text, 'Trait');
         if (concreteId && traitId) {
-          const edgeKey = generateId('IMPLEMENTS', `${concreteId}->${traitId}`);
           graph.addRelationship({
-            id: edgeKey,
+            id: generateId('IMPLEMENTS', `${concreteId}->${traitId}`),
             sourceId: concreteId,
             targetId: traitId,
             type: 'IMPLEMENTS',
@@ -152,9 +133,6 @@ export const processHeritage = async (
       }
     }
 
-    if (disposable) {
-      syntaxTree.delete();
-    }
-    pos++;
+    if (owned) tree.delete();
   }
-};
+}
