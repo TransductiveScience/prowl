@@ -111,14 +111,13 @@ const roadmapItems: RoadmapItem[] = [
     category: 'core',
   },
 
-  // Chat & Context - In Progress
+  // Chat & Context
   {
     id: 'chat-injection',
     title: 'Context Bridge',
-    description: 'Inject context between chat sessions',
-    status: 'in-progress',
+    description: 'Expose codebase context to external AI agents via MCP Server',
+    status: 'completed',
     category: 'chat',
-    effort: 'medium',
   },
   {
     id: 'chat-history',
