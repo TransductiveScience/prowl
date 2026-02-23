@@ -5,8 +5,5 @@ release/
 *.log
 .env
 .env.local
-docs/*
-!docs/plans/
-!docs/gitnexus-provenance-audit.md
+docs/
 .prowl/
-docs
