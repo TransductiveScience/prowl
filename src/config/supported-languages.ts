@@ -1,3 +1,5 @@
+/* ── Recognised programming languages ───────────────── */
+
 export enum SupportedLanguages {
     JavaScript = 'javascript',
     TypeScript = 'typescript',
@@ -10,7 +12,9 @@ export enum SupportedLanguages {
     CSharp = 'csharp',
 }
 
-export const LANGUAGE_DISPLAY_NAMES: Record<SupportedLanguages, string> = {
+/* ── Human-readable labels per language ─────────────── */
+
+export const LANG_LABELS: Record<SupportedLanguages, string> = {
     [SupportedLanguages.JavaScript]: 'JavaScript',
     [SupportedLanguages.TypeScript]: 'TypeScript',
     [SupportedLanguages.Python]: 'Python',
@@ -21,3 +25,6 @@ export const LANGUAGE_DISPLAY_NAMES: Record<SupportedLanguages, string> = {
     [SupportedLanguages.CPlusPlus]: 'C++',
     [SupportedLanguages.CSharp]: 'C#',
 };
+
+/** @deprecated Use LANG_LABELS instead */
+export const LANGUAGE_DISPLAY_NAMES = LANG_LABELS;

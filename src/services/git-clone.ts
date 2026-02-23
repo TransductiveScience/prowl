@@ -3,45 +3,52 @@ import LightningFS from '@isomorphic-git/lightning-fs';
 import { shouldIgnorePath } from '../config/ignore-service';
 import { FileEntry } from './zip';
 
-// Dynamically import isomorphic-git to avoid CJS/ESM interop issues
-const getGitModule = async () => {
+/* ── Lazy module loader for isomorphic-git (CJS compat) */
+
+const loadIsomorphicGit = async () => {
   const m = await import('isomorphic-git');
   return m.default || m;
 };
 
+/* ── Virtual filesystem singleton ───────────────────── */
+
 let fs: LightningFS;
 let pfs: any;
 
-function createVirtualFS(): string {
+function initVFS(): string {
   const tag = `prowl-git-${Date.now()}`;
   fs = new LightningFS(tag);
   pfs = fs.promises;
   return tag;
 }
 
-const GH_URL_PATTERN = /github\.com\/([^\/]+)\/([^\/]+)/;
+/* ── URL parsing ────────────────────────────────────── */
 
-export const parseGitHubUrl = (url: string): { owner: string; repo: string } | null => {
+const GITHUB_REGEX = /github\.com\/([^\/]+)\/([^\/]+)/;
+
+export function parseGitHubUrl(url: string): { owner: string; repo: string } | null {
   const normalized = url.trim().replace(/\.git$/, '');
-  const hit = GH_URL_PATTERN.exec(normalized);
+  const hit = GITHUB_REGEX.exec(normalized);
   if (!hit) return null;
   return { owner: hit[1], repo: hit[2] };
-};
+}
 
 type ProgressFn = (phase: string, progress: number) => void;
 
-async function collectFiles(root: string, cwd: string): Promise<FileEntry[]> {
-  const accumulated: FileEntry[] = [];
+/* ── Recursive file walker ──────────────────────────── */
 
-  let dirContents: string[];
+async function walkTree(root: string, cwd: string): Promise<FileEntry[]> {
+  const entries: FileEntry[] = [];
+
+  let listing: string[];
   try {
-    dirContents = await pfs.readdir(cwd);
+    listing = await pfs.readdir(cwd);
   } catch {
     console.warn(`Cannot read directory: ${cwd}`);
-    return accumulated;
+    return entries;
   }
 
-  for (const name of dirContents) {
+  for (const name of listing) {
     if (name === '.git') continue;
 
     const absolute = `${cwd}/${name}`;
@@ -60,29 +67,31 @@ async function collectFiles(root: string, cwd: string): Promise<FileEntry[]> {
     }
 
     if (info.isDirectory()) {
-      const nested = await collectFiles(root, absolute);
-      for (const f of nested) accumulated.push(f);
+      const nested = await walkTree(root, absolute);
+      for (const f of nested) entries.push(f);
     } else {
       try {
         const text = await pfs.readFile(absolute, { encoding: 'utf8' }) as string;
-        accumulated.push({ path: relative, content: text });
+        entries.push({ path: relative, content: text });
       } catch {
-        // binary or unreadable -- skip
+        // binary or unreadable — skip silently
       }
     }
   }
 
-  return accumulated;
+  return entries;
 }
 
-async function purgeDirectory(target: string): Promise<void> {
+/* ── Cleanup helper ─────────────────────────────────── */
+
+async function rmRecursive(target: string): Promise<void> {
   try {
     const items = await pfs.readdir(target);
     for (const item of items) {
       const full = `${target}/${item}`;
       const meta = await pfs.stat(full);
       if (meta.isDirectory()) {
-        await purgeDirectory(full);
+        await rmRecursive(full);
       } else {
         await pfs.unlink(full);
       }
@@ -93,63 +102,67 @@ async function purgeDirectory(target: string): Promise<void> {
   }
 }
 
-function buildCloneUrl(owner: string, repo: string): string {
+/* ── URL and auth builders ──────────────────────────── */
+
+function githubCloneUrl(owner: string, repo: string): string {
   return `https://github.com/${owner}/${repo}.git`;
 }
 
-function buildAuthCallback(token?: string) {
+function authCallback(token?: string) {
   if (!token) return undefined;
   return () => ({ username: token, password: 'x-oauth-basic' });
 }
 
-export const cloneRepository = async (
+/* ── Public: clone a GitHub repo into virtual FS ────── */
+
+export async function cloneRepository(
   url: string,
   onProgress?: ProgressFn,
   token?: string,
-): Promise<FileEntry[]> => {
+): Promise<FileEntry[]> {
   const parsed = parseGitHubUrl(url);
   if (!parsed) {
     throw new Error('Invalid URL. Expected: https://github.com/owner/repo');
   }
 
-  const dbTag = createVirtualFS();
+  const dbTag = initVFS();
   const workdir = `/${parsed.repo}`;
-  const cloneTarget = buildCloneUrl(parsed.owner, parsed.repo);
+  const cloneTarget = githubCloneUrl(parsed.owner, parsed.repo);
 
-  const report = (phase: string, pct: number) => { onProgress?.(phase, pct); };
-  const cleanup = async () => {
-    try { await purgeDirectory(workdir); } catch {}
+  const notify = (phase: string, pct: number) => { onProgress?.(phase, pct); };
+  const teardown = async () => {
+    try { await rmRecursive(workdir); } catch {}
     try { indexedDB.deleteDatabase(dbTag); } catch {}
   };
 
   try {
-    report('cloning', 0);
+    notify('cloning', 0);
 
-    const git = await getGitModule();
+    const git = await loadIsomorphicGit();
     await git.clone({
       fs,
       http,
       dir: workdir,
       url: cloneTarget,
       depth: 1,
-      onAuth: buildAuthCallback(token),
+      onAuth: authCallback(token),
       onProgress: (ev) => {
         if (ev.total) {
-          report('cloning', Math.round((ev.loaded / ev.total) * 100));
+          notify('cloning', Math.round((ev.loaded / ev.total) * 100));
         }
       },
     });
 
-    report('reading', 0);
+    notify('reading', 0);
 
-    const entries = await collectFiles(workdir, workdir);
+    const results = await walkTree(workdir, workdir);
 
-    await cleanup();
-    report('complete', 100);
+    await teardown();
+    notify('complete', 100);
 
-    return entries;
+    return results;
   } catch (err) {
-    await cleanup();
+    await teardown();
     throw err;
   }
-};
+}
