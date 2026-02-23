@@ -6,7 +6,7 @@
 
 **Your second monitor while AI writes the code.**
 
-[![Version](https://img.shields.io/github/v/release/neur0map/prowl?label=version&color=blue)](https://github.com/neur0map/prowl/releases)
+[![Version](https://img.shields.io/github/v/release/neur0map/prowl)](https://github.com/neur0map/prowl/releases)
 [![Beta](https://img.shields.io/badge/status-beta-orange.svg)](#)
 [![License](https://img.shields.io/badge/license-BSL--1.0-green.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-18%2B-brightgreen.svg)](https://nodejs.org)
