@@ -5,13 +5,12 @@ import { LoadingOverlay } from './components/LoadingOverlay';
 import { SplashScreen } from './components/SplashScreen';
 import { Header } from './components/Header';
 import { GraphCanvas, GraphCanvasHandle } from './components/GraphCanvas';
-import { RightPanel } from './components/RightPanel';
+import { RightPanel, RightPanelTab } from './components/RightPanel';
 import { SettingsPanel } from './components/SettingsPanel';
 import { RoadmapPanel } from './components/RoadmapPanel';
 import { StatusBar } from './components/StatusBar';
 import { FileTreePanel } from './components/FileTreePanel';
 import { CodeEditorPanel } from './components/CodeEditorPanel';
-import { TerminalDrawer } from './components/TerminalDrawer';
 import { UpdateBanner } from './components/UpdateBanner';
 import { FileEntry } from './services/zip';
 import { getActiveProviderConfig } from './core/llm/settings-service';
@@ -28,6 +27,7 @@ const AppContent = () => {
     setProjectName,
     progress,
     isRightPanelOpen,
+    setRightPanelOpen,
     runPipeline,
     runPipelineFromFiles,
     isSettingsPanelOpen,
@@ -51,7 +51,7 @@ const AppContent = () => {
   } = useAppState();
 
   const graphCanvasRef = useRef<GraphCanvasHandle>(null);
-  const [isTerminalOpen, setIsTerminalOpen] = useState(false);
+  const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>('chat');
   const [isRoadmapOpen, setIsRoadmapOpen] = useState(false);
 
   /* Folder path ref for the file watcher — kept in a ref to skip re-render deps */
@@ -64,7 +64,12 @@ const AppContent = () => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key === '`') {
         e.preventDefault();
-        setIsTerminalOpen(prev => !prev);
+        if (isRightPanelOpen && rightPanelTab === 'terminal') {
+          setRightPanelOpen(false);
+        } else {
+          setRightPanelOpen(true);
+          setRightPanelTab('terminal');
+        }
       }
       /* Cmd+O / Ctrl+O triggers folder picker */
       if ((e.metaKey || e.ctrlKey) && e.key === 'o') {
@@ -74,7 +79,7 @@ const AppContent = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [isRightPanelOpen, rightPanelTab, setRightPanelOpen]);
 
   const handleFileSelect = useCallback(async (file: File) => {
     pendingFolderPathRef.current = null;
@@ -418,23 +423,28 @@ const AppContent = () => {
           )}
         </div>
 
-        {/* Tabbed side panel — chat, flows, agent */}
-        {isRightPanelOpen && <RightPanel onFocusNode={handleFocusNode} />}
+        {/* Tabbed side panel — chat, flows, agent, terminal */}
+        {isRightPanelOpen && (
+          <RightPanel
+            onFocusNode={handleFocusNode}
+            activeTab={rightPanelTab}
+            onTabChange={setRightPanelTab}
+            terminalCwd={agentWatcherState.workspacePath || pendingFolderPathRef.current || undefined}
+          />
+        )}
       </main>
 
       <StatusBar
-        isTerminalOpen={isTerminalOpen}
-        onTerminalToggle={() => setIsTerminalOpen(prev => !prev)}
+        isTerminalOpen={isRightPanelOpen && rightPanelTab === 'terminal'}
+        onTerminalToggle={() => {
+          if (isRightPanelOpen && rightPanelTab === 'terminal') {
+            setRightPanelOpen(false);
+          } else {
+            setRightPanelOpen(true);
+            setRightPanelTab('terminal');
+          }
+        }}
       />
-
-      {/* Integrated terminal drawer */}
-      {(window as any).prowl?.terminal && (
-        <TerminalDrawer
-          isOpen={isTerminalOpen}
-          onToggle={() => setIsTerminalOpen(prev => !prev)}
-          cwd={agentWatcherState.workspacePath || pendingFolderPathRef.current || undefined}
-        />
-      )}
 
       {/* Provider settings modal */}
       <SettingsPanel

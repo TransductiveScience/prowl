@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Send, Square, MessageSquare, User,
   PanelRightClose, Loader2, AlertTriangle, GitBranch, Radio, Sparkles, Trash2,
-  ChevronDown, ChevronRight, Wrench
+  ChevronDown, ChevronRight, Wrench, Terminal
 } from 'lucide-react';
 import { useAppState } from '../hooks/useAppState';
 import { ToolCallPill } from './ToolCallPill';
@@ -11,6 +11,7 @@ import { MarkdownRenderer } from './MarkdownRenderer';
 import { ProcessesPanel } from './ProcessesPanel';
 import { AgentPanel } from './AgentPanel';
 import { ContextBridge } from './ContextBridge';
+import { TerminalDrawer } from './TerminalDrawer';
 
 const isElectron = typeof window !== 'undefined' && !!(window as any).prowl;
 
@@ -58,11 +59,16 @@ const ToolCallGroup = ({ steps }: { steps: { id: string; toolCall: any }[] }) =>
   );
 };
 
+export type RightPanelTab = 'chat' | 'processes' | 'agent' | 'terminal';
+
 interface RightPanelProps {
   onFocusNode: (nodeId: string) => void;
+  activeTab?: RightPanelTab;
+  onTabChange?: (tab: RightPanelTab) => void;
+  terminalCwd?: string;
 }
 
-export const RightPanel = ({ onFocusNode }: RightPanelProps) => {
+export const RightPanel = ({ onFocusNode, activeTab: controlledTab, onTabChange, terminalCwd }: RightPanelProps) => {
   const {
     isRightPanelOpen,
     setRightPanelOpen,
@@ -80,7 +86,9 @@ export const RightPanel = ({ onFocusNode }: RightPanelProps) => {
   } = useAppState();
 
   const [chatInput, setChatInput] = useState('');
-  const [activeTab, setActiveTab] = useState<'chat' | 'processes' | 'agent'>('chat');
+  const [internalTab, setInternalTab] = useState<RightPanelTab>('chat');
+  const activeTab = controlledTab ?? internalTab;
+  const setActiveTab = onTabChange ?? setInternalTab;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -245,9 +253,11 @@ export const RightPanel = ({ onFocusNode }: RightPanelProps) => {
     'Find all API handlers',
   ];
 
+  const prowl = (window as any).prowl;
   const tabs = [
     { id: 'processes' as const, label: 'Flows', icon: GitBranch },
     { id: 'chat' as const, label: 'Chat', icon: MessageSquare },
+    ...(isElectron && prowl?.terminal ? [{ id: 'terminal' as const, label: 'Terminal', icon: Terminal }] : []),
     ...(isElectron ? [{ id: 'agent' as const, label: 'Agent', icon: Radio }] : []),
   ];
 
@@ -300,6 +310,18 @@ export const RightPanel = ({ onFocusNode }: RightPanelProps) => {
       {activeTab === 'agent' && (
         <div className="flex-1 flex flex-col overflow-hidden">
           <AgentPanel />
+        </div>
+      )}
+
+      {/* Terminal — keep mounted (hidden) so xterm state is preserved across tab switches */}
+      {prowl?.terminal && (
+        <div className={`flex-1 flex flex-col min-h-0 overflow-hidden ${activeTab === 'terminal' ? '' : 'hidden'}`}>
+          <TerminalDrawer
+            isOpen={activeTab === 'terminal'}
+            onToggle={() => setActiveTab('chat')}
+            cwd={terminalCwd}
+            embedded
+          />
         </div>
       )}
 

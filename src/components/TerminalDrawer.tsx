@@ -110,12 +110,13 @@ interface TerminalDrawerProps {
   isOpen: boolean
   onToggle: () => void
   cwd?: string
+  embedded?: boolean
 }
 
 /* ═══════════════════════════════════════════════════════════════
    COMPONENT
 ═══════════════════════════════════════════════════════════════ */
-export const TerminalDrawer = ({ isOpen, onToggle, cwd }: TerminalDrawerProps) => {
+export const TerminalDrawer = ({ isOpen, onToggle, cwd, embedded }: TerminalDrawerProps) => {
   const [tabs, setTabs] = useState<TerminalTab[]>([])
   const [activeTabId, setActiveTabId] = useState<string | null>(null)
   const [drawerHeight, setDrawerHeight] = useState(() => {
@@ -491,14 +492,20 @@ export const TerminalDrawer = ({ isOpen, onToggle, cwd }: TerminalDrawerProps) =
   ═══════════════════════════════════════════════════════════════ */
   return (
     <div
-      className={`flex flex-col border-t border-white/[0.08] bg-void shrink-0 ${isOpen ? 'animate-fade-in' : 'hidden'}`}
-      style={{ height: drawerHeight }}
+      className={`flex flex-col bg-void ${
+        embedded
+          ? `flex-1 min-h-0 ${isOpen ? '' : 'hidden'}`
+          : `border-t border-white/[0.08] shrink-0 ${isOpen ? 'animate-fade-in' : 'hidden'}`
+      }`}
+      style={embedded ? undefined : { height: drawerHeight }}
     >
-      {/* Resize handle */}
-      <div
-        onMouseDown={startResize}
-        className="h-[3px] cursor-ns-resize hover:bg-accent/40 transition-colors shrink-0"
-      />
+      {/* Resize handle — drawer mode only */}
+      {!embedded && (
+        <div
+          onMouseDown={startResize}
+          className="h-[3px] cursor-ns-resize hover:bg-accent/40 transition-colors shrink-0"
+        />
+      )}
 
       {/* Tab bar */}
       <div className="flex items-center gap-0.5 px-2 py-1 bg-[#18181a] border-b border-white/[0.06] shrink-0">
@@ -557,13 +564,15 @@ export const TerminalDrawer = ({ isOpen, onToggle, cwd }: TerminalDrawerProps) =
           >
             <Search size={14} />
           </button>
-          <button
-            onClick={onToggle}
-            className="p-1 rounded-lg hover:bg-white/[0.06] text-text-muted hover:text-text-secondary transition-colors"
-            title="Minimize terminal"
-          >
-            <ChevronDown size={14} />
-          </button>
+          {!embedded && (
+            <button
+              onClick={onToggle}
+              className="p-1 rounded-lg hover:bg-white/[0.06] text-text-muted hover:text-text-secondary transition-colors"
+              title="Minimize terminal"
+            >
+              <ChevronDown size={14} />
+            </button>
+          )}
         </div>
       </div>
 
