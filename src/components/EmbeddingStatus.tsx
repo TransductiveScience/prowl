@@ -3,18 +3,20 @@ import { useAppState } from '../hooks/useAppState';
 import { useState, type ReactNode } from 'react';
 import { WebGPUFallbackDialog } from './WebGPUFallbackDialog';
 
-function ProgressBar({ percent, colorClass }: { percent: number; colorClass: string }) {
+/* ── Shared sub-components ──────────────────────────── */
+
+function ProgressIndicator({ percent, barColor }: { percent: number; barColor: string }) {
   return (
     <div className="w-24 h-1 bg-elevated rounded-full overflow-hidden">
       <div
-        className={`h-full ${colorClass} rounded-full transition-all duration-300`}
+        className={`h-full ${barColor} rounded-full transition-all duration-300`}
         style={{ width: `${percent}%` }}
       />
     </div>
   );
 }
 
-function StatusPill({
+function StatusBadge({
   children,
   borderColor,
   bgColor,
@@ -30,10 +32,12 @@ function StatusPill({
   );
 }
 
-function renderIdleState(
+/* ── Per-status view builders ───────────────────────── */
+
+function idleView(
   onStart: () => void,
   onTest: () => void,
-  diagResult: string | null,
+  testOutput: string | null,
 ) {
   return (
     <div className="flex items-center gap-2">
@@ -44,7 +48,7 @@ function renderIdleState(
           title="Run KuzuDB array parameter diagnostic"
         >
           <FlaskConical className="w-3 h-3" />
-          {diagResult || 'Test'}
+          {testOutput || 'Test'}
         </button>
       )}
       <button
@@ -60,33 +64,33 @@ function renderIdleState(
   );
 }
 
-function renderLoadingState(downloadPct: number) {
+function loadingView(downloadPct: number) {
   return (
-    <StatusPill borderColor="border-accent/30">
+    <StatusBadge borderColor="border-accent/30">
       <Loader2 className="w-4 h-4 text-accent animate-spin" />
       <div className="flex flex-col gap-0.5">
         <span className="text-text-secondary text-xs">Loading AI model...</span>
-        <ProgressBar percent={downloadPct} colorClass="bg-accent" />
+        <ProgressIndicator percent={downloadPct} barColor="bg-accent" />
       </div>
-    </StatusPill>
+    </StatusBadge>
   );
 }
 
-function renderEmbeddingState(done: number, total: number, pct: number) {
+function embeddingView(done: number, total: number, pct: number) {
   return (
-    <StatusPill borderColor="border-node-function/30">
+    <StatusBadge borderColor="border-node-function/30">
       <Loader2 className="w-4 h-4 text-node-function animate-spin" />
       <div className="flex flex-col gap-0.5">
         <span className="text-text-secondary text-xs">
           Embedding {done}/{total} nodes
         </span>
-        <ProgressBar percent={pct} colorClass="bg-node-function" />
+        <ProgressIndicator percent={pct} barColor="bg-node-function" />
       </div>
-    </StatusPill>
+    </StatusBadge>
   );
 }
 
-function renderIndexingState() {
+function indexingView() {
   return (
     <div className="flex items-center gap-2 px-3 py-1.5 bg-surface border border-node-interface/30 rounded-lg text-sm text-text-secondary">
       <Loader2 className="w-4 h-4 text-node-interface animate-spin" />
@@ -95,7 +99,7 @@ function renderIndexingState() {
   );
 }
 
-function renderReadyState() {
+function readyView() {
   return (
     <div
       className="flex items-center gap-2 px-3 py-1.5 bg-violet-500/10 border border-violet-500/30 rounded-md text-sm text-violet-300"
@@ -107,7 +111,7 @@ function renderReadyState() {
   );
 }
 
-function renderErrorState(onRetry: () => void, errMsg?: string) {
+function errorView(onRetry: () => void, errMsg?: string) {
   return (
     <button
       onClick={onRetry}
@@ -120,6 +124,8 @@ function renderErrorState(onRetry: () => void, errMsg?: string) {
   );
 }
 
+/* ── Main component ─────────────────────────────────── */
+
 export const EmbeddingStatus = () => {
   const {
     embeddingStatus,
@@ -130,73 +136,73 @@ export const EmbeddingStatus = () => {
     testArrayParams,
   } = useAppState();
 
-  const [diagResult, setDiagResult] = useState<string | null>(null);
-  const [fallbackVisible, setFallbackVisible] = useState(false);
+  const [testOutput, setTestOutput] = useState<string | null>(null);
+  const [showFallback, setShowFallback] = useState(false);
 
   if (viewMode !== 'exploring' || !graph) return null;
 
   const totalNodes = graph.nodes.length;
 
-  const triggerEmbeddings = async (device?: 'webgpu' | 'wasm') => {
+  const launchEmbeddings = async (device?: 'webgpu' | 'wasm') => {
     try {
       await startEmbeddings(device);
     } catch (err: any) {
       if (err?.name === 'WebGPUNotAvailableError' || err?.message?.includes('WebGPU not available')) {
-        setFallbackVisible(true);
+        setShowFallback(true);
       } else {
         console.error('Embedding failed:', err);
       }
     }
   };
 
-  const onFallbackCPU = () => {
-    setFallbackVisible(false);
-    triggerEmbeddings('wasm');
+  const handleCpuFallback = () => {
+    setShowFallback(false);
+    launchEmbeddings('wasm');
   };
 
-  const onFallbackSkip = () => { setFallbackVisible(false); };
+  const handleSkipFallback = () => { setShowFallback(false); };
 
-  const runDiagnostic = async () => {
-    setDiagResult('Testing...');
+  const runArrayTest = async () => {
+    setTestOutput('Testing...');
     const result = await testArrayParams();
     if (result.success) {
-      setDiagResult('Array params OK');
+      setTestOutput('Array params OK');
     } else {
-      setDiagResult(`Failed: ${result.error}`);
+      setTestOutput(`Failed: ${result.error}`);
       console.error('[prowl:embedding] array params test failed:', result.error);
     }
   };
 
   const dialog = (
     <WebGPUFallbackDialog
-      isOpen={fallbackVisible}
-      onClose={() => setFallbackVisible(false)}
-      onUseCPU={onFallbackCPU}
-      onSkip={onFallbackSkip}
+      isOpen={showFallback}
+      onClose={() => setShowFallback(false)}
+      onUseCPU={handleCpuFallback}
+      onSkip={handleSkipFallback}
       nodeCount={totalNodes}
     />
   );
 
-  const statusRenderers: Record<string, () => ReactNode> = {
-    idle: () => renderIdleState(() => triggerEmbeddings(), runDiagnostic, diagResult),
-    loading: () => renderLoadingState(embeddingProgress?.modelDownloadPercent ?? 0),
-    embedding: () => renderEmbeddingState(
+  const viewForStatus: Record<string, () => ReactNode> = {
+    idle: () => idleView(() => launchEmbeddings(), runArrayTest, testOutput),
+    loading: () => loadingView(embeddingProgress?.modelDownloadPercent ?? 0),
+    embedding: () => embeddingView(
       embeddingProgress?.nodesProcessed ?? 0,
       embeddingProgress?.totalNodes ?? 0,
       embeddingProgress?.percent ?? 0,
     ),
-    indexing: renderIndexingState,
-    ready: renderReadyState,
-    error: () => renderErrorState(() => triggerEmbeddings(), embeddingProgress?.error),
+    indexing: indexingView,
+    ready: readyView,
+    error: () => errorView(() => launchEmbeddings(), embeddingProgress?.error),
   };
 
-  const renderer = statusRenderers[embeddingStatus];
-  if (!renderer) return null;
+  const render = viewForStatus[embeddingStatus];
+  if (!render) return null;
 
-  const content = renderer();
-  const needsDialog = embeddingStatus === 'idle' || embeddingStatus === 'loading' || embeddingStatus === 'error';
+  const content = render();
+  const showDialog = embeddingStatus === 'idle' || embeddingStatus === 'loading' || embeddingStatus === 'error';
 
-  if (needsDialog) {
+  if (showDialog) {
     return <>{content}{dialog}</>;
   }
 

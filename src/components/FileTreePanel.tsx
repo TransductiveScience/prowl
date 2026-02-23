@@ -19,18 +19,20 @@ import { FILTERABLE_LABELS, NODE_COLORS, ALL_EDGE_TYPES, EDGE_INFO, type EdgeTyp
 import { GraphNode, NodeLabel } from '../core/graph/types';
 import { LanguageIcon } from './LanguageIcon';
 
-interface FsNode {
+/* ── Tree data structure ────────────────────────────── */
+
+interface TreeEntry {
   id: string;
   name: string;
   kind: 'folder' | 'file';
   fullPath: string;
-  subtree: FsNode[];
+  subtree: TreeEntry[];
   source?: GraphNode;
 }
 
-function assembleTree(nodes: GraphNode[]): FsNode[] {
-  const trunk: FsNode[] = [];
-  const registry = new Map<string, FsNode>();
+function buildFileTree(nodes: GraphNode[]): TreeEntry[] {
+  const roots: TreeEntry[] = [];
+  const lookup = new Map<string, TreeEntry>();
 
   const fsNodes = nodes
     .filter(n => n.label === 'Folder' || n.label === 'File')
@@ -38,28 +40,28 @@ function assembleTree(nodes: GraphNode[]): FsNode[] {
 
   for (const gn of fsNodes) {
     const segments = gn.properties.filePath.split('/').filter(Boolean);
-    let trail = '';
-    let level = trunk;
+    let pathSoFar = '';
+    let level = roots;
 
     for (let idx = 0; idx < segments.length; idx++) {
       const seg = segments[idx];
-      trail = trail ? `${trail}/${seg}` : seg;
+      pathSoFar = pathSoFar ? `${pathSoFar}/${seg}` : seg;
 
-      let entry = registry.get(trail);
+      let entry = lookup.get(pathSoFar);
       if (!entry) {
         const isTail = idx === segments.length - 1;
         const isFileTail = isTail && gn.label === 'File';
 
         entry = {
-          id: isTail ? gn.id : trail,
+          id: isTail ? gn.id : pathSoFar,
           name: seg,
           kind: isFileTail ? 'file' : 'folder',
-          fullPath: trail,
+          fullPath: pathSoFar,
           subtree: [],
           source: isTail ? gn : undefined,
         };
 
-        registry.set(trail, entry);
+        lookup.set(pathSoFar, entry);
         level.push(entry);
       }
 
@@ -67,21 +69,23 @@ function assembleTree(nodes: GraphNode[]): FsNode[] {
     }
   }
 
-  return trunk;
+  return roots;
 }
 
-function gatherFileIds(fsNode: FsNode): string[] {
-  const collected: string[] = [];
-  if (fsNode.kind === 'file' && fsNode.source) {
-    collected.push(fsNode.source.id);
+function collectDescendantIds(node: TreeEntry): string[] {
+  const ids: string[] = [];
+  if (node.kind === 'file' && node.source) {
+    ids.push(node.source.id);
   }
-  for (const child of fsNode.subtree) {
-    collected.push(...gatherFileIds(child));
+  for (const child of node.subtree) {
+    ids.push(...collectDescendantIds(child));
   }
-  return collected;
+  return ids;
 }
 
-const NODE_TYPE_ICONS: Record<string, typeof Folder> = {
+/* ── Icon lookup ────────────────────────────────────── */
+
+const LABEL_ICONS: Record<string, typeof Folder> = {
   Folder: Folder,
   File: FileCode,
   Class: Box,
@@ -91,98 +95,100 @@ const NODE_TYPE_ICONS: Record<string, typeof Folder> = {
   Import: FileCode,
 };
 
-function iconForLabel(label: NodeLabel) {
-  return NODE_TYPE_ICONS[label] ?? Variable;
+function pickIcon(label: NodeLabel) {
+  return LABEL_ICONS[label] ?? Variable;
 }
 
-function FsTreeRow({
+/* ── Single tree row (recursive) ────────────────────── */
+
+function TreeRow({
   entry,
   indent,
   filter,
-  onPick,
+  onSelect,
   openPaths,
   onToggle,
   activePath,
 }: {
-  entry: FsNode;
+  entry: TreeEntry;
   indent: number;
   filter: string;
-  onPick: (n: FsNode) => void;
+  onSelect: (n: TreeEntry) => void;
   openPaths: Set<string>;
   onToggle: (p: string) => void;
   activePath: string | null;
 }) {
-  const expanded = openPaths.has(entry.fullPath);
+  const isOpen = openPaths.has(entry.fullPath);
   const selected = activePath === entry.fullPath;
   const hasKids = entry.subtree.length > 0;
 
   const childrenRef = useRef<HTMLDivElement>(null);
-  const [rendered, setRendered] = useState(expanded);
-  const [height, setHeight] = useState<number | 'auto'>(expanded ? 'auto' : 0);
+  const [rendered, setRendered] = useState(isOpen);
+  const [height, setHeight] = useState<number | 'auto'>(isOpen ? 'auto' : 0);
 
   useLayoutEffect(() => {
-    if (expanded) setRendered(true);
-  }, [expanded]);
+    if (isOpen) setRendered(true);
+  }, [isOpen]);
 
   useLayoutEffect(() => {
     if (!childrenRef.current) return;
-    if (expanded && rendered) {
+    if (isOpen && rendered) {
       setHeight(0);
       requestAnimationFrame(() => {
         if (!childrenRef.current) return;
         const h = childrenRef.current.scrollHeight;
         requestAnimationFrame(() => setHeight(h));
       });
-    } else if (!expanded && rendered) {
+    } else if (!isOpen && rendered) {
       const h = childrenRef.current.scrollHeight;
       setHeight(h);
       requestAnimationFrame(() => {
         requestAnimationFrame(() => setHeight(0));
       });
     }
-  }, [expanded, rendered]);
+  }, [isOpen, rendered]);
 
   const handleTransitionEnd = () => {
-    if (!expanded) setRendered(false);
-    if (expanded) setHeight('auto');
+    if (!isOpen) setRendered(false);
+    if (isOpen) setHeight('auto');
   };
 
   const visibleChildren = useMemo(() => {
     if (!filter) return entry.subtree;
-    const lowerFilter = filter.toLowerCase();
+    const needle = filter.toLowerCase();
     return entry.subtree.filter(c =>
-      c.name.toLowerCase().includes(lowerFilter) ||
-      c.subtree.some(gc => gc.name.toLowerCase().includes(lowerFilter))
+      c.name.toLowerCase().includes(needle) ||
+      c.subtree.some(gc => gc.name.toLowerCase().includes(needle))
     );
   }, [entry.subtree, filter]);
 
-  const nameMatches = filter.length > 0 && entry.name.toLowerCase().includes(filter.toLowerCase());
+  const nameHit = filter.length > 0 && entry.name.toLowerCase().includes(filter.toLowerCase());
 
   const rowClasses = [
     'w-full flex items-center gap-1.5 px-2 py-1 text-left text-sm',
     'hover:bg-hover transition-colors rounded-lg relative border-l-2',
     selected ? 'bg-amber-500/15 text-amber-300 border-amber-400' : 'text-text-secondary hover:text-text-primary border-transparent',
-    nameMatches ? 'bg-accent/10' : '',
+    nameHit ? 'bg-accent/10' : '',
   ].join(' ');
 
   return (
     <div>
       <button
-        onClick={() => { if (hasKids) onToggle(entry.fullPath); onPick(entry); }}
+        onClick={() => { if (hasKids) onToggle(entry.fullPath); onSelect(entry); }}
         className={rowClasses}
         style={{ paddingLeft: `${indent * 12 + 8}px` }}
       >
         {hasKids ? (
           <ChevronRight
             className="w-3.5 h-3.5 shrink-0 text-text-muted transition-transform duration-150 ease-out"
-            style={{ transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
+            style={{ transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}
           />
         ) : (
           <span className="w-3.5" />
         )}
 
         {entry.kind === 'folder' ? (
-          expanded
+          isOpen
             ? <FolderOpen className="w-4 h-4 shrink-0" style={{ color: NODE_COLORS.Folder }} />
             : <Folder className="w-4 h-4 shrink-0" style={{ color: NODE_COLORS.Folder }} />
         ) : (
@@ -198,18 +204,18 @@ function FsTreeRow({
           onTransitionEnd={handleTransitionEnd}
           style={{
             height: height === 'auto' ? 'auto' : `${height}px`,
-            opacity: expanded ? 1 : 0,
+            opacity: isOpen ? 1 : 0,
             overflow: 'hidden',
             transition: height === 'auto' ? 'none' : 'height 150ms ease-out, opacity 150ms ease-out',
           }}
         >
           {visibleChildren.map(child => (
-            <FsTreeRow
+            <TreeRow
               key={child.id}
               entry={child}
               indent={indent + 1}
               filter={filter}
-              onPick={onPick}
+              onSelect={onSelect}
               openPaths={openPaths}
               onToggle={onToggle}
               activePath={activePath}
@@ -220,6 +226,8 @@ function FsTreeRow({
     </div>
   );
 }
+
+/* ── Panel component ────────────────────────────────── */
 
 interface FileTreePanelProps {
   onFocusNode: (nodeId: string) => void;
@@ -240,14 +248,14 @@ export const FileTreePanel = ({ onFocusNode }: FileTreePanelProps) => {
     setHighlightedNodeIds,
   } = useAppState();
 
-  const [panelHidden, setPanelHidden] = useState(true);
-  const [filterText, setFilterText] = useState('');
+  const [collapsed, setCollapsed] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
   const [openPaths, setOpenPaths] = useState<Set<string>>(new Set());
   const [tab, setTab] = useState<'files' | 'filters'>('filters');
 
   const tree = useMemo(() => {
     if (!graph) return [];
-    return assembleTree(graph.nodes);
+    return buildFileTree(graph.nodes);
   }, [graph]);
 
   useEffect(() => {
@@ -271,7 +279,7 @@ export const FileTreePanel = ({ onFocusNode }: FileTreePanelProps) => {
     if (ancestors.length > 0) {
       setOpenPaths(prev => {
         const updated = new Set(prev);
-        ancestors.forEach(a => updated.add(a));
+        for (const a of ancestors) updated.add(a);
         return updated;
       });
     }
@@ -286,21 +294,21 @@ export const FileTreePanel = ({ onFocusNode }: FileTreePanelProps) => {
     });
   }, []);
 
-  const handlePick = useCallback((fsNode: FsNode) => {
-    if (fsNode.kind === 'folder') {
-      const childIds = gatherFileIds(fsNode);
+  const handleSelect = useCallback((node: TreeEntry) => {
+    if (node.kind === 'folder') {
+      const childIds = collectDescendantIds(node);
       if (childIds.length > 0) setHighlightedNodeIds(new Set(childIds));
-    } else if (fsNode.source) {
-      const alreadySelected = selectedNode?.id === fsNode.source.id;
-      setSelectedNode(fsNode.source);
+    } else if (node.source) {
+      const alreadySelected = selectedNode?.id === node.source.id;
+      setSelectedNode(node.source);
       openCodePanel();
-      if (!alreadySelected) onFocusNode(fsNode.source.id);
+      if (!alreadySelected) onFocusNode(node.source.id);
     }
   }, [setSelectedNode, openCodePanel, onFocusNode, selectedNode, setHighlightedNodeIds]);
 
-  const currentPath = selectedNode?.properties.filePath || null;
+  const activePath = selectedNode?.properties.filePath || null;
 
-  const depthOptions = [
+  const HOP_OPTIONS = [
     { val: null as number | null, text: 'All' },
     { val: 1, text: '1 hop' },
     { val: 2, text: '2 hops' },
@@ -308,21 +316,21 @@ export const FileTreePanel = ({ onFocusNode }: FileTreePanelProps) => {
     { val: 5, text: '5 hops' },
   ];
 
-  const legendLabels: NodeLabel[] = ['Folder', 'File', 'Class', 'Function', 'Interface', 'Method'];
+  const LEGEND_KINDS: NodeLabel[] = ['Folder', 'File', 'Class', 'Function', 'Interface', 'Method'];
 
   return (
     <div
       className={`h-full shrink-0 border-r border-white/[0.08] overflow-hidden transition-[width,background-color] duration-200 ease-out relative ${
-        panelHidden ? 'bg-surface' : 'bg-void'
+        collapsed ? 'bg-surface' : 'bg-void'
       }`}
-      style={{ width: panelHidden ? 48 : 256 }}
+      style={{ width: collapsed ? 48 : 256 }}
     >
-      {/* ── Collapsed icon bar ── */}
+      {/* ── Collapsed icon rail ── */}
       <div className={`absolute inset-0 flex flex-col items-center py-3 gap-2 transition-opacity duration-150 ${
-        panelHidden ? 'opacity-100' : 'opacity-0 pointer-events-none'
+        collapsed ? 'opacity-100' : 'opacity-0 pointer-events-none'
       }`}>
         <button
-          onClick={() => setPanelHidden(false)}
+          onClick={() => setCollapsed(false)}
           className="p-2 text-text-secondary hover:text-text-primary hover:bg-hover rounded-lg transition-colors"
           title="Expand Panel"
         >
@@ -330,14 +338,14 @@ export const FileTreePanel = ({ onFocusNode }: FileTreePanelProps) => {
         </button>
         <div className="w-6 h-px bg-border-subtle my-1" />
         <button
-          onClick={() => { setPanelHidden(false); setTab('files'); }}
+          onClick={() => { setCollapsed(false); setTab('files'); }}
           className={`p-2 rounded-lg transition-colors ${tab === 'files' ? 'text-accent bg-accent/10' : 'text-text-secondary hover:text-text-primary hover:bg-hover'}`}
           title="File Explorer"
         >
           <Folder className="w-5 h-5" />
         </button>
         <button
-          onClick={() => { setPanelHidden(false); setTab('filters'); }}
+          onClick={() => { setCollapsed(false); setTab('filters'); }}
           className={`p-2 rounded-lg transition-colors ${tab === 'filters' ? 'text-accent bg-accent/10' : 'text-text-secondary hover:text-text-primary hover:bg-hover'}`}
           title="Filters"
         >
@@ -345,10 +353,10 @@ export const FileTreePanel = ({ onFocusNode }: FileTreePanelProps) => {
         </button>
       </div>
 
-      {/* ── Expanded panel ── */}
+      {/* ── Expanded panel body ── */}
       <div
         className={`h-full flex flex-col transition-opacity duration-150 ${
-          panelHidden ? 'opacity-0 pointer-events-none' : 'opacity-100'
+          collapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'
         }`}
         style={{ width: 256 }}
       >
@@ -369,7 +377,7 @@ export const FileTreePanel = ({ onFocusNode }: FileTreePanelProps) => {
             ))}
           </div>
           <button
-            onClick={() => setPanelHidden(true)}
+            onClick={() => setCollapsed(true)}
             className="p-1 text-text-muted hover:text-text-primary hover:bg-hover rounded-lg transition-colors"
             title="Collapse Panel"
           >
@@ -385,8 +393,8 @@ export const FileTreePanel = ({ onFocusNode }: FileTreePanelProps) => {
                 <input
                   type="text"
                   placeholder="Search files..."
-                  value={filterText}
-                  onChange={e => setFilterText(e.target.value)}
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
                   className="w-full pl-8 pr-3 py-1.5 bg-elevated border border-border-subtle rounded-lg text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
                 />
               </div>
@@ -397,15 +405,15 @@ export const FileTreePanel = ({ onFocusNode }: FileTreePanelProps) => {
                 <div className="px-3 py-4 text-center text-text-muted text-xs">No files loaded</div>
               ) : (
                 tree.map(node => (
-                  <FsTreeRow
+                  <TreeRow
                     key={node.id}
                     entry={node}
                     indent={0}
-                    filter={filterText}
-                    onPick={handlePick}
+                    filter={searchQuery}
+                    onSelect={handleSelect}
                     openPaths={openPaths}
                     onToggle={togglePath}
-                    activePath={currentPath}
+                    activePath={activePath}
                   />
                 ))
               )}
@@ -421,7 +429,7 @@ export const FileTreePanel = ({ onFocusNode }: FileTreePanelProps) => {
                 Hop Depth
               </h3>
               <div className="flex gap-1">
-                {depthOptions.map(({ val, text }) => (
+                {HOP_OPTIONS.map(({ val, text }) => (
                   <button
                     key={text}
                     onClick={() => setDepthFilter(val)}
@@ -441,7 +449,7 @@ export const FileTreePanel = ({ onFocusNode }: FileTreePanelProps) => {
             </div>
 
             <div className="mb-4 flex flex-wrap gap-x-2.5 gap-y-1 px-1">
-              {legendLabels.map(label => (
+              {LEGEND_KINDS.map(label => (
                 <div key={label} className="flex items-center gap-1">
                   <div className="w-1.5 h-3 rounded-sm" style={{ backgroundColor: NODE_COLORS[label] }} />
                   <span className="text-[9px] text-text-muted">{label}</span>
@@ -457,7 +465,7 @@ export const FileTreePanel = ({ onFocusNode }: FileTreePanelProps) => {
 
             <div className="flex flex-col gap-0.5">
               {FILTERABLE_LABELS.map(label => {
-                const Ico = iconForLabel(label);
+                const Ico = pickIcon(label);
                 const on = visibleLabels.includes(label);
                 return (
                   <button

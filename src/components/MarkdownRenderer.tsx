@@ -6,7 +6,9 @@ import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { MermaidDiagram } from './MermaidDiagram';
 import { ToolCallPill } from './ToolCallPill';
 
-const HIGHLIGHT_THEME = {
+/* ── Syntax highlight overrides ─────────────────────── */
+
+const SYNTAX_THEME = {
     ...vscDarkPlus,
     'pre[class*="language-"]': {
         ...vscDarkPlus['pre[class*="language-"]'],
@@ -23,7 +25,7 @@ const HIGHLIGHT_THEME = {
     },
 };
 
-const CODE_BLOCK_STYLE = {
+const BLOCK_STYLE = {
     margin: 0,
     padding: '14px 16px',
     borderRadius: '8px',
@@ -32,22 +34,26 @@ const CODE_BLOCK_STYLE = {
     border: '1px solid #1e1e2a',
 };
 
-const FILE_GROUNDING_REGEX =
+/* ── Reference detection patterns ───────────────────── */
+
+const FILE_REF_PATTERN =
     /\[\[([a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9]+(?::\d+(?:[,\-–]\d+)*)?)\]\]/g;
-const NODE_GROUNDING_REGEX =
+const NODE_REF_PATTERN =
     /\[\[(?:graph:)?(Class|Function|Method|Interface|File|Folder|Variable|Enum|Type|CodeElement):([^\]]+)\]\]/g;
-const INLINE_PATH_REGEX =
+const INLINE_FILE_PATTERN =
     /^([a-zA-Z0-9_\-./\\]+\/[a-zA-Z0-9_\-./\\]*\.[a-zA-Z0-9]+(?::\d+(?:[,\-–]\d+)*)?)$/;
 
-function rewriteGroundingLinks(raw: string): string {
+/* ── Reference link rewriting ───────────────────────── */
+
+function transformReferences(raw: string): string {
     const segments = raw.split('```');
     for (let idx = 0; idx < segments.length; idx += 2) {
         segments[idx] = segments[idx]
-            .replace(FILE_GROUNDING_REGEX, (_full, ref: string) => {
+            .replace(FILE_REF_PATTERN, (_full, ref: string) => {
                 const stripped = ref.trim();
                 return `[${stripped}](code-ref:${encodeURIComponent(stripped)})`;
             })
-            .replace(NODE_GROUNDING_REGEX, (_full, kind: string, name: string) => {
+            .replace(NODE_REF_PATTERN, (_full, kind: string, name: string) => {
                 const compound = `${kind}:${name.trim()}`;
                 return `[${compound}](node-ref:${encodeURIComponent(compound)})`;
             });
@@ -55,21 +61,23 @@ function rewriteGroundingLinks(raw: string): string {
     return segments.join('```');
 }
 
-function isGroundingHref(href: string): boolean {
+function isInternalRef(href: string): boolean {
     return href.startsWith('code-ref:') || href.startsWith('node-ref:');
 }
 
-function decodeGroundingHref(href: string): { isNode: boolean; label: string } {
+function parseInternalRef(href: string): { isNode: boolean; label: string } {
     const isNode = href.startsWith('node-ref:');
     const prefixLen = isNode ? 9 : 9;
     return { isNode, label: decodeURIComponent(href.slice(prefixLen)) };
 }
 
-function extractLanguage(className: string | undefined): string | null {
+function detectLanguage(className: string | undefined): string | null {
     if (!className) return null;
     const found = /language-(\w+)/.exec(className);
     return found ? found[1] : null;
 }
+
+/* ── Link sub-components ────────────────────────────── */
 
 interface MarkdownRendererProps {
     content: string;
@@ -77,7 +85,7 @@ interface MarkdownRendererProps {
     toolCalls?: any[];
 }
 
-function GroundingLink({
+function InternalRefLink({
     href,
     onClick,
     children,
@@ -88,8 +96,8 @@ function GroundingLink({
     children: React.ReactNode;
     extra: Record<string, any>;
 }) {
-    const { isNode, label } = decodeGroundingHref(href);
-    const sharedCls =
+    const { isNode, label } = parseInternalRef(href);
+    const baseCls =
         'code-ref-btn inline-flex items-center px-2 py-0.5 rounded-md font-mono text-[12px] !no-underline hover:!no-underline transition-colors';
     const variantCls = isNode
         ? 'border border-amber-300/55 bg-amber-400/10 !text-amber-200 visited:!text-amber-200 hover:bg-amber-400/15 hover:border-amber-200/70'
@@ -105,7 +113,7 @@ function GroundingLink({
                 ev.preventDefault();
                 onClick?.(href);
             }}
-            className={`${sharedCls} ${variantCls}`}
+            className={`${baseCls} ${variantCls}`}
             title={tooltip}
             {...extra}
         >
@@ -114,7 +122,7 @@ function GroundingLink({
     );
 }
 
-function ExternalLink({
+function OutboundLink({
     href,
     children,
     extra,
@@ -136,30 +144,32 @@ function ExternalLink({
     );
 }
 
-function buildComponentMap(linkHandler?: (href: string) => void) {
+/* ── ReactMarkdown component overrides ──────────────── */
+
+function createComponentOverrides(linkHandler?: (href: string) => void) {
     return {
         a: ({ href, children, ...rest }: any) => {
             const destination = href || '';
-            if (isGroundingHref(destination)) {
+            if (isInternalRef(destination)) {
                 return (
-                    <GroundingLink href={destination} onClick={linkHandler} extra={rest}>
+                    <InternalRefLink href={destination} onClick={linkHandler} extra={rest}>
                         {children}
-                    </GroundingLink>
+                    </InternalRefLink>
                 );
             }
             return (
-                <ExternalLink href={destination} extra={rest}>
+                <OutboundLink href={destination} extra={rest}>
                     {children}
-                </ExternalLink>
+                </OutboundLink>
             );
         },
         code: ({ className, children, ...rest }: any) => {
-            const lang = extractLanguage(className);
+            const lang = detectLanguage(className);
             const raw = String(children).replace(/\n$/, '');
             const isBlock = Boolean(className || lang);
 
             if (!isBlock) {
-                const pathTest = raw.match(INLINE_PATH_REGEX);
+                const pathTest = raw.match(INLINE_FILE_PATTERN);
                 if (pathTest && linkHandler) {
                     const dest = `code-ref:${encodeURIComponent(pathTest[1])}`;
                     return (
@@ -184,10 +194,10 @@ function buildComponentMap(linkHandler?: (href: string) => void) {
 
             return (
                 <SyntaxHighlighter
-                    style={HIGHLIGHT_THEME}
+                    style={SYNTAX_THEME}
                     language={dialect}
                     PreTag="div"
-                    customStyle={CODE_BLOCK_STYLE}
+                    customStyle={BLOCK_STYLE}
                 >
                     {raw}
                 </SyntaxHighlighter>
@@ -197,27 +207,29 @@ function buildComponentMap(linkHandler?: (href: string) => void) {
     };
 }
 
-function preserveCustomSchemes(url: string): string {
+function allowInternalSchemes(url: string): string {
     if (url.startsWith('code-ref:') || url.startsWith('node-ref:')) return url;
     return url;
 }
+
+/* ── Exported component ─────────────────────────────── */
 
 export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
     content,
     onLinkClick,
     toolCalls,
 }) => {
-    const processedContent = React.useMemo(() => rewriteGroundingLinks(content), [content]);
-    const componentMap = React.useMemo(() => buildComponentMap(onLinkClick), [onLinkClick]);
+    const transformedMarkdown = React.useMemo(() => transformReferences(content), [content]);
+    const overrides = React.useMemo(() => createComponentOverrides(onLinkClick), [onLinkClick]);
 
     return (
         <div className="text-text-primary text-sm">
             <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
-                urlTransform={preserveCustomSchemes}
-                components={componentMap}
+                urlTransform={allowInternalSchemes}
+                components={overrides}
             >
-                {processedContent}
+                {transformedMarkdown}
             </ReactMarkdown>
 
             {toolCalls && toolCalls.length > 0 && (
