@@ -1,47 +1,47 @@
-import { generateId } from "@/lib/utils";
-import { CodeGraph, GraphNode, GraphRelationship } from "../graph/types";
+import { generateId } from '@/lib/utils';
+import type { CodeGraph, GraphNode, GraphRelationship } from '../graph/types';
 
-export const processStructure = (graph: CodeGraph, paths: string[]) => {
-  for (const filePath of paths) {
-    const segments = filePath.split('/');
-    let accumulated = '';
-    let prevId = '';
+/**
+ * Walks every source path and materialises the folder/file
+ * hierarchy as graph nodes linked by CONTAINS edges.
+ */
+export function buildDirectoryTree(graph: CodeGraph, sourcePaths: string[]): void {
+  for (const raw of sourcePaths) {
+    const parts = raw.split('/');
+    let running = '';
+    let parentId = '';
 
-    let depth = 0;
-    while (depth < segments.length) {
-      const segment = segments[depth];
-      const isTerminal = depth === segments.length - 1;
-      const kind = isTerminal ? 'File' : 'Folder';
+    for (let i = 0; i < parts.length; i++) {
+      const name = parts[i];
+      running = running === '' ? name : `${running}/${name}`;
+      const leaf = i === parts.length - 1;
+      const tag = leaf ? 'File' : 'Folder';
+      const nodeId = generateId(tag, running);
 
-      accumulated = accumulated === '' ? segment : [accumulated, segment].join('/');
-
-      const thisId = generateId(kind, accumulated);
-
-      const entry: GraphNode = {
-        id: thisId,
-        label: kind,
-        properties: {
-          name: segment,
-          filePath: accumulated,
-        },
+      const node: GraphNode = {
+        id: nodeId,
+        label: tag,
+        properties: { name, filePath: running },
       };
-      graph.addNode(entry);
+      graph.addNode(node);
 
-      if (prevId !== '') {
-        const linkId = generateId('CONTAINS', `${prevId}->${thisId}`);
-        const link: GraphRelationship = {
-          id: linkId,
+      if (parentId) {
+        const edgeId = generateId('CONTAINS', `${parentId}->${nodeId}`);
+        const edge: GraphRelationship = {
+          id: edgeId,
           type: 'CONTAINS',
-          sourceId: prevId,
-          targetId: thisId,
+          sourceId: parentId,
+          targetId: nodeId,
           confidence: 1.0,
           reason: '',
         };
-        graph.addRelationship(link);
+        graph.addRelationship(edge);
       }
 
-      prevId = thisId;
-      depth++;
+      parentId = nodeId;
     }
   }
-};
+}
+
+/* preserve the old export name so nothing downstream breaks */
+export { buildDirectoryTree as processStructure };
