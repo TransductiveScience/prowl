@@ -786,6 +786,170 @@ const workerApi = {
 
   },
 
+  /* ── Live update (real-time file change pipeline) ────── */
+
+  async liveUpdate(
+    changes: Map<string, { type: string; content: string | null }>,
+  ): Promise<SerializableIndexingResult | null> {
+    if (!currentGraphResult) return null;
+
+    const { createCodeGraph } = await import('../core/graph/graph');
+    const { reparseFiles } = await import('../core/snapshot/incremental-updater');
+
+    const changedPaths = new Set(changes.keys());
+    const deletedPaths = new Set<string>();
+    for (const [path, change] of changes) {
+      if (change.type === 'remove' || change.content === null) deletedPaths.add(path);
+    }
+    const graph = createCodeGraph();
+    const nodesToRemove = new Set<string>();
+
+    // Copy nodes — keep File/Folder nodes for changed (non-deleted) files so
+    // incoming IMPORTS/CONTAINS edges from other files stay connected.
+    // Only remove symbol nodes (Function, Class, etc.) for changed files.
+    for (const node of currentGraphResult.graph.nodes) {
+      if (node.label === 'Community' || node.label === 'Process') continue;
+      const filePath = node.properties.filePath;
+      if (filePath && changedPaths.has(filePath)) {
+        if (deletedPaths.has(filePath)) {
+          // File deleted → remove everything
+          nodesToRemove.add(node.id);
+        } else if (node.label === 'File' || node.label === 'Folder') {
+          // File changed → keep File/Folder nodes (preserves IMPORTS/CONTAINS)
+          graph.addNode(node);
+        } else {
+          // Symbol in changed file → remove (will be recreated by reparse)
+          nodesToRemove.add(node.id);
+        }
+      } else {
+        graph.addNode(node);
+      }
+    }
+
+    // Copy edges; defer incoming edges to removed symbols (may be restored after reparse)
+    type DeferredEdge = import('../core/graph/types').GraphRelationship;
+    const deferredEdges: DeferredEdge[] = [];
+    for (const rel of currentGraphResult.graph.relationships) {
+      if (rel.type === 'MEMBER_OF' || rel.type === 'STEP_IN_PROCESS') continue;
+      if (nodesToRemove.has(rel.sourceId)) continue; // source gone → drop
+      if (nodesToRemove.has(rel.targetId)) {
+        // Target removed but source intact → defer (restore if target recreated)
+        deferredEdges.push(rel);
+        continue;
+      }
+      graph.addRelationship(rel);
+    }
+
+    // Update storedFileContents
+    for (const [path, change] of changes) {
+      if (change.type === 'remove' || change.content === null) {
+        storedFileContents.delete(path);
+      } else {
+        storedFileContents.set(path, change.content);
+      }
+    }
+
+    // Prepare changed files for reparsing
+    const changedFiles: Array<{ path: string; content: string }> = [];
+    for (const [path, change] of changes) {
+      if (change.content !== null && change.type !== 'remove') {
+        changedFiles.push({ path, content: change.content });
+      }
+    }
+
+    // Reparse changed files (structure, symbols, imports, calls, heritage)
+    await reparseFiles(graph, changedFiles, storedFileContents);
+
+    // Restore deferred edges whose target was recreated by reparsing
+    // (e.g. CALLS from other files to functions that still exist in the changed file)
+    for (const rel of deferredEdges) {
+      if (graph.hasNode(rel.targetId)) {
+        graph.addRelationship(rel);
+      }
+    }
+
+    // Re-run communities on full graph
+    const { processCommunities } = await import('../core/ingestion/community-processor');
+    const communityResult = await processCommunities(graph);
+
+    for (const comm of communityResult.communities) {
+      graph.addNode({
+        id: comm.id,
+        label: 'Community',
+        properties: {
+          name: comm.label,
+          filePath: '',
+          heuristicLabel: comm.heuristicLabel,
+          cohesion: comm.cohesion,
+          symbolCount: comm.symbolCount,
+        },
+      });
+    }
+    for (const m of communityResult.memberships) {
+      graph.addRelationship({
+        id: `${m.nodeId}_member_of_${m.communityId}`,
+        type: 'MEMBER_OF',
+        sourceId: m.nodeId,
+        targetId: m.communityId,
+        confidence: 1.0,
+        reason: 'louvain-algorithm',
+      });
+    }
+
+    // Re-run processes on full graph
+    const { processProcesses } = await import('../core/ingestion/process-processor');
+    const processResult = await processProcesses(graph, communityResult.memberships);
+
+    for (const proc of processResult.processes) {
+      graph.addNode({
+        id: proc.id,
+        label: 'Process',
+        properties: {
+          name: proc.label,
+          filePath: '',
+          heuristicLabel: proc.heuristicLabel,
+          processType: proc.processType,
+          stepCount: proc.stepCount,
+          communities: proc.communities,
+          entryPointId: proc.entryPointId,
+          terminalId: proc.terminalId,
+        },
+      });
+    }
+    for (const step of processResult.steps) {
+      graph.addRelationship({
+        id: `${step.nodeId}_step_${step.step}_${step.processId}`,
+        type: 'STEP_IN_PROCESS',
+        sourceId: step.nodeId,
+        targetId: step.processId,
+        confidence: 1.0,
+        reason: 'trace-detection',
+        step: step.step,
+      });
+    }
+
+    // Update worker state
+    currentGraphResult = { graph, fileContents: storedFileContents, communityResult, processResult };
+
+    // Rebuild BM25 keyword index
+    const { buildBM25Index } = await getSearch();
+    buildBM25Index(storedFileContents);
+
+    // Reload KuzuDB with updated graph (reuses existing DB, clears data in place)
+    try {
+      const kuzu = await getKuzuAdapter();
+      await kuzu.loadGraphToKuzu(graph, storedFileContents);
+    } catch (err) {
+      if (import.meta.env.DEV) console.warn('[prowl:live] KuzuDB reload failed:', err);
+    }
+
+    if (import.meta.env.DEV) {
+      console.log(`[prowl:live] updated ${changes.size} files — ${graph.nodeCount} nodes, ${graph.relationshipCount} edges`);
+    }
+
+    return serializeIndexingResult(currentGraphResult);
+  },
+
   /* ── MCP wrapper methods ─────────────────────────────── */
 
   async mcpGrep(

@@ -156,11 +156,24 @@ server.tool(
 server.tool(
   'prowl_cypher',
   `Run a Cypher query against the knowledge graph.
-Node tables: File, Folder, Function, Class, Interface, Method, CodeElement
-Edge table: CodeEdge (type prop: CONTAINS, DEFINES, IMPORTS, CALLS, EXTENDS, IMPLEMENTS)
-Props: name, filePath, startLine, endLine, content, isExported
-RULES: Never return whole nodes — always project properties (RETURN f.name, f.filePath).
-WITH + ORDER BY must include LIMIT.`,
+
+Node tables: File, Folder, Function, Class, Interface, Method, CodeElement, Const, Struct, Enum
+Edge table: CodeEdge (single table — filter by type property)
+
+IMPORTANT SYNTAX:
+  CORRECT: MATCH (a)-[e:CodeEdge]->(b) WHERE e.type = 'IMPORTS'
+  WRONG:   MATCH (a)-[:IMPORTS]->(b)  -- IMPORTS is not a table name
+
+Edge types (e.type): CONTAINS, DEFINES, IMPORTS, CALLS, EXTENDS, IMPLEMENTS
+Node props: name, filePath, startLine, endLine, content, isExported
+Edge props: type, confidence, reason
+
+RULES: Never return whole nodes — project properties (RETURN f.name, f.filePath).
+WITH + ORDER BY must include LIMIT. Use label(n) to get node type.
+
+Examples:
+  Files importing X: MATCH (f:File)-[e:CodeEdge]->(t:File) WHERE t.filePath CONTAINS 'X' AND e.type = 'IMPORTS' RETURN f.filePath
+  Functions in file: MATCH (n) WHERE n.filePath = 'src/foo.ts' AND label(n) <> 'File' RETURN n.name, label(n)`,
   {
     cypher: z.string().describe('Cypher statement to execute'),
     query: z.string().optional().describe('Natural-language query (needed when cypher uses {{QUERY_VECTOR}})'),

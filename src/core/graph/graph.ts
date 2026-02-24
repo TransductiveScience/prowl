@@ -50,5 +50,6 @@ export function createCodeGraph(): CodeGraph {
 
     addNode: putNode,
     addRelationship: putRel,
+    hasNode: (id: string) => nodeMap[id] !== undefined,
   };
 }

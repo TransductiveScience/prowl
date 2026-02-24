@@ -62,10 +62,18 @@ const prowlApi = {
   onToolEvent: (cb: (data: ToolEvent) => void) => {
     ipcRenderer.on('agent:tool-event', (_, data) => cb(data))
   },
+  onFileChanged: (cb: (data: { filepath: string; type: string; content: string | null }) => void) => {
+    ipcRenderer.on('mcp:file-changed', (_, data) => cb(data))
+  },
+  onSaveSnapshot: (cb: () => void) => {
+    ipcRenderer.on('mcp:save-snapshot', () => cb())
+  },
 
   removeAllListeners: () => {
     ipcRenderer.removeAllListeners('agent:file-activity')
     ipcRenderer.removeAllListeners('agent:tool-event')
+    ipcRenderer.removeAllListeners('mcp:file-changed')
+    ipcRenderer.removeAllListeners('mcp:save-snapshot')
   },
 
   // File system (for code editor)

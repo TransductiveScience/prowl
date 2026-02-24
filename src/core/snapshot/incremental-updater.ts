@@ -5,6 +5,42 @@ import type { IndexingProgress, IndexingResult } from '../../types/pipeline';
 import type { DiffResult } from './types';
 
 /**
+ * Re-run all parse phases (structure, parsing, imports, calls, heritage) on a
+ * set of changed files and insert the resulting nodes/edges into `graph`.
+ *
+ * Shared by `applyIncrementalUpdate` (snapshot restore) and `liveUpdate` (real-time).
+ */
+export async function reparseFiles(
+  graph: CodeGraph,
+  changedFiles: Array<{ path: string; content: string }>,
+  allFileContents: Map<string, string>,
+): Promise<void> {
+  if (changedFiles.length === 0) return;
+
+  const { processStructure } = await import('../ingestion/structure-processor');
+  const { processParsing } = await import('../ingestion/parsing-processor');
+  const { processImports, createImportMap } = await import('../ingestion/import-processor');
+  const { processCalls } = await import('../ingestion/call-processor');
+  const { processHeritage } = await import('../ingestion/heritage-processor');
+  const { createSymbolTable } = await import('../ingestion/symbol-table');
+  const { createASTCache } = await import('../ingestion/ast-cache');
+
+  const symbolTable = createSymbolTable();
+  const astCache = createASTCache(50);
+  const importMap = createImportMap();
+
+  const allPaths = Array.from(allFileContents.keys());
+  processStructure(graph, allPaths);
+
+  await processParsing(graph, changedFiles, symbolTable, astCache);
+  await processImports(graph, changedFiles, astCache, importMap, () => {});
+  await processCalls(graph, changedFiles, astCache, symbolTable, importMap, () => {});
+  await processHeritage(graph, changedFiles, astCache, symbolTable, () => {});
+
+  astCache.clear();
+}
+
+/**
  * Apply an incremental update to an existing graph based on file changes.
  *
  * Steps:
@@ -28,27 +64,36 @@ export async function applyIncrementalUpdate(
     message: `Incremental update: ${diff.added.length} added, ${diff.modified.length} modified, ${diff.deleted.length} deleted`,
   });
 
-  // Step 1: Build a new graph with nodes/edges NOT originating from changed/deleted files
+  // Step 1: Build a new graph — keep File/Folder for modified files, remove symbols
   const graph = createCodeGraph();
   const nodesToRemove = new Set<string>();
+  const deletedPaths = new Set(diff.deleted);
 
   for (const node of existingGraph.nodes) {
+    if (node.label === 'Community' || node.label === 'Process') continue;
     const filePath = node.properties.filePath;
     if (filePath && changedPaths.has(filePath)) {
-      nodesToRemove.add(node.id);
-    } else {
-      // Keep Community and Process nodes — they'll be regenerated
-      if (node.label !== 'Community' && node.label !== 'Process') {
+      if (deletedPaths.has(filePath)) {
+        nodesToRemove.add(node.id);
+      } else if (node.label === 'File' || node.label === 'Folder') {
         graph.addNode(node);
+      } else {
+        nodesToRemove.add(node.id);
       }
+    } else {
+      graph.addNode(node);
     }
   }
 
+  // Keep edges; defer incoming edges to removed symbols for post-reparse restore
+  const deferredEdges: GraphRelationship[] = [];
   for (const rel of existingGraph.relationships) {
-    // Skip relationships involving removed nodes
-    if (nodesToRemove.has(rel.sourceId) || nodesToRemove.has(rel.targetId)) continue;
-    // Skip community/process relationships — they'll be regenerated
     if (rel.type === 'MEMBER_OF' || rel.type === 'STEP_IN_PROCESS') continue;
+    if (nodesToRemove.has(rel.sourceId)) continue;
+    if (nodesToRemove.has(rel.targetId)) {
+      deferredEdges.push(rel);
+      continue;
+    }
     graph.addRelationship(rel);
   }
 
@@ -77,51 +122,16 @@ export async function applyIncrementalUpdate(
       message: `Re-indexing ${changedFiles.length} files...`,
     });
 
-    // Import phase processors
-    const { processStructure } = await import('../ingestion/structure-processor');
-    const { processParsing } = await import('../ingestion/parsing-processor');
-    const { processImports, createImportMap } = await import('../ingestion/import-processor');
-    const { processCalls } = await import('../ingestion/call-processor');
-    const { processHeritage } = await import('../ingestion/heritage-processor');
-    const { createSymbolTable } = await import('../ingestion/symbol-table');
-    const { createASTCache } = await import('../ingestion/ast-cache');
+    await reparseFiles(graph, changedFiles, updatedFileContents);
 
-    const symbolTable = createSymbolTable();
-    const astCache = createASTCache(50);
-    const importMap = createImportMap();
+    // Restore deferred edges whose target was recreated by reparsing
+    for (const rel of deferredEdges) {
+      if (graph.hasNode(rel.targetId)) {
+        graph.addRelationship(rel);
+      }
+    }
 
-    // Phase 2: Structure on changed files
-    const allPaths = Array.from(updatedFileContents.keys());
-    processStructure(graph, allPaths);
-
-    onProgress({ phase: 'parsing', percent: 30, message: 'Parsing changed files...' });
-
-    // Phase 3: Parse only changed files
-    await processParsing(graph, changedFiles, symbolTable, astCache, (current, total) => {
-      onProgress({
-        phase: 'parsing',
-        percent: 30 + Math.round((current / total) * 30),
-        message: 'Parsing changed files...',
-        stats: { filesProcessed: current, totalFiles: total, nodesCreated: graph.nodeCount },
-      });
-    });
-
-    onProgress({ phase: 'imports', percent: 60, message: 'Resolving imports...' });
-
-    // Phase 4: Imports on changed files
-    await processImports(graph, changedFiles, astCache, importMap, () => {});
-
-    onProgress({ phase: 'calls', percent: 70, message: 'Tracing calls...' });
-
-    // Phase 5: Calls on changed files
-    await processCalls(graph, changedFiles, astCache, symbolTable, importMap, () => {});
-
-    onProgress({ phase: 'heritage', percent: 80, message: 'Linking inheritance...' });
-
-    // Phase 6: Heritage on changed files
-    await processHeritage(graph, changedFiles, astCache, symbolTable, () => {});
-
-    astCache.clear();
+    onProgress({ phase: 'heritage', percent: 80, message: 'Re-indexing complete' });
   }
 
   // Step 3: Re-run communities on FULL graph

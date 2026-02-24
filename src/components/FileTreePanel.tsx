@@ -39,7 +39,7 @@ function buildFileTree(nodes: GraphNode[]): TreeEntry[] {
     .sort((a, b) => a.properties.filePath.localeCompare(b.properties.filePath));
 
   for (const gn of fsNodes) {
-    const segments = gn.properties.filePath.split('/').filter(Boolean);
+    const segments = gn.properties.filePath.split(/[/\\]/).filter(Boolean);
     let pathSoFar = '';
     let level = roots;
 
@@ -268,7 +268,7 @@ export const FileTreePanel = ({ onFocusNode }: FileTreePanelProps) => {
     const fp = selectedNode?.properties?.filePath;
     if (!fp) return;
 
-    const parts = fp.split('/').filter(Boolean);
+    const parts = fp.split(/[/\\]/).filter(Boolean);
     const ancestors: string[] = [];
     let accum = '';
     for (let i = 0; i < parts.length - 1; i++) {

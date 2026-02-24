@@ -1,23 +1,13 @@
 /* ── Node taxonomy ─────────────────────────────────────── */
 
 export type NodeLabel =
-  | 'Project'
-  | 'Package'
-  | 'Module'
-  | 'Folder'
-  | 'File'
-  | 'Class'
-  | 'Function'
-  | 'Method'
-  | 'Variable'
-  | 'Interface'
-  | 'Enum'
-  | 'Decorator'
-  | 'Import'
-  | 'Type'
-  | 'CodeElement'
-  | 'Community'
-  | 'Process';
+  | 'Project' | 'Package' | 'Module' | 'Folder' | 'File'
+  | 'Class' | 'Function' | 'Method' | 'Variable' | 'Interface'
+  | 'Enum' | 'Decorator' | 'Import' | 'Type' | 'CodeElement'
+  | 'Community' | 'Process'
+  | 'Struct' | 'Const' | 'Static' | 'Property' | 'TypeAlias'
+  | 'Macro' | 'Typedef' | 'Union' | 'Namespace' | 'Trait' | 'Impl'
+  | 'Record' | 'Delegate' | 'Annotation' | 'Constructor' | 'Template';
 
 /* ── Edge taxonomy ─────────────────────────────────────── */
 
@@ -95,4 +85,5 @@ export interface CodeGraph {
   relationshipCount: number;
   addNode(node: GraphNode): void;
   addRelationship(rel: GraphRelationship): void;
+  hasNode(id: string): boolean;
 }

@@ -52,7 +52,7 @@ export class WorkspaceWatcher extends EventEmitter {
         if (!rel || rel === '.') return false
 
         // Check each path segment against ignored directory names
-        const segments = rel.split('/')
+        const segments = rel.split(/[/\\]/)
         for (const seg of segments.slice(0, -1)) {
           if (IGNORED_DIR_NAMES.has(seg)) return true
         }
@@ -96,7 +96,7 @@ export class WorkspaceWatcher extends EventEmitter {
 
     for (const entry of entries) {
       const fullPath = join(dirPath, entry.name)
-      const relativePath = relative(this.workspacePath, fullPath)
+      const relativePath = relative(this.workspacePath, fullPath).replace(/\\/g, '/')
 
       if (this.shouldIgnore(entry.name)) continue
 
@@ -131,17 +131,17 @@ export class WorkspaceWatcher extends EventEmitter {
   }
 
   private handleAdd(filepath: string): void {
-    const relativePath = relative(this.workspacePath, filepath)
+    const relativePath = relative(this.workspacePath, filepath).replace(/\\/g, '/')
     this.emit('file:add', relativePath)
   }
 
   private handleChange(filepath: string): void {
-    const relativePath = relative(this.workspacePath, filepath)
+    const relativePath = relative(this.workspacePath, filepath).replace(/\\/g, '/')
     this.emit('file:write', relativePath)
   }
 
   private handleRemove(filepath: string): void {
-    const relativePath = relative(this.workspacePath, filepath)
+    const relativePath = relative(this.workspacePath, filepath).replace(/\\/g, '/')
     this.emit('file:remove', relativePath)
   }
 }

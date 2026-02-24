@@ -37,6 +37,20 @@ const tsQueries = `
       name: (identifier) @name
       value: (function_expression)))) @definition.function
 
+; Exported const/let with any value (non-function values captured as const)
+(export_statement
+  declaration: (lexical_declaration
+    (variable_declarator
+      name: (identifier) @name
+      value: (_)))) @definition.const
+
+; Top-level const/let at module scope
+(program
+  (lexical_declaration
+    (variable_declarator
+      name: (identifier) @name
+      value: (_)))) @definition.const
+
 (import_statement
   source: (string) @import.source) @import
 
@@ -95,6 +109,20 @@ const jsQueries = `
     (variable_declarator
       name: (identifier) @name
       value: (function_expression)))) @definition.function
+
+; Exported const/let with any value (non-function values captured as const)
+(export_statement
+  declaration: (lexical_declaration
+    (variable_declarator
+      name: (identifier) @name
+      value: (_)))) @definition.const
+
+; Top-level const/let at module scope
+(program
+  (lexical_declaration
+    (variable_declarator
+      name: (identifier) @name
+      value: (_)))) @definition.const
 
 (import_statement
   source: (string) @import.source) @import

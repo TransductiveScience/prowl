@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, safeStorage, session, shell } from 'electron'
-import { join } from 'path'
+import { join, relative } from 'path'
 import { homedir } from 'os'
 import { readdir, readFile, writeFile, stat } from 'fs/promises'
 import { SnapshotIO } from './snapshot-io'
@@ -93,7 +93,7 @@ async function scanDirectory(dirPath: string, basePath: string): Promise<FileEnt
 
   for (const entry of dirEntries) {
     const fullPath = join(dirPath, entry.name)
-    const relativePath = fullPath.replace(basePath + '/', '')
+    const relativePath = relative(basePath, fullPath).replace(/\\/g, '/')
 
     if (entry.isDirectory()) {
       if (IGNORED_DIRS.has(entry.name) || entry.name.startsWith('.')) continue
@@ -323,14 +323,34 @@ app.whenReady().then(async () => {
     watcher.on('file:add', (filepath) => {
       console.log('[prowl:chokidar] add:', filepath)
       mainWindow?.webContents.send('agent:file-activity', { filepath, type: 'add' })
+      // Live reindex: read file and send content to renderer
+      const fullPath = join(resolved, filepath)
+      if (!shouldIgnoreFile(filepath.split('/').pop() || '')) {
+        readFile(fullPath, 'utf-8')
+          .then(content => {
+            mainWindow?.webContents.send('mcp:file-changed', { filepath, type: 'add', content })
+          })
+          .catch(() => { /* binary or unreadable — skip */ })
+      }
     })
     watcher.on('file:write', (filepath) => {
       console.log('[prowl:chokidar] write:', filepath)
       mainWindow?.webContents.send('agent:file-activity', { filepath, type: 'write' })
+      // Live reindex: read file and send content to renderer
+      const fullPath = join(resolved, filepath)
+      if (!shouldIgnoreFile(filepath.split('/').pop() || '')) {
+        readFile(fullPath, 'utf-8')
+          .then(content => {
+            mainWindow?.webContents.send('mcp:file-changed', { filepath, type: 'write', content })
+          })
+          .catch(() => { /* binary or unreadable — skip */ })
+      }
     })
     watcher.on('file:remove', (filepath) => {
       console.log('[prowl:chokidar] remove:', filepath)
       mainWindow?.webContents.send('agent:file-activity', { filepath, type: 'remove' })
+      // Live reindex: notify removal
+      mainWindow?.webContents.send('mcp:file-changed', { filepath, type: 'remove', content: null })
     })
     await watcher.start()
 
@@ -555,6 +575,11 @@ function stopAllWatchers(): void {
   openclawClient?.stop()
   openclawClient = null
 }
+
+app.on('before-quit', () => {
+  // Signal renderer to save snapshot before exit
+  mainWindow?.webContents.send('mcp:save-snapshot')
+})
 
 app.on('will-quit', async () => {
   if (mcpServer) {

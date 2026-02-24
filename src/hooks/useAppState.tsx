@@ -585,6 +585,51 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Live update: listen for file changes from chokidar and debounce updates to worker
+  const liveUpdateDirtyRef = useRef(false);
+
+  useEffect(() => {
+    if (!window.prowl?.onFileChanged) return;
+
+    const pendingChanges = new Map<string, { type: string; content: string | null }>();
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    window.prowl.onFileChanged((data) => {
+      pendingChanges.set(data.filepath, { type: data.type, content: data.content });
+
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(async () => {
+        const api = apiRef.current;
+        if (!api || pendingChanges.size === 0) return;
+
+        const batch = new Map(pendingChanges);
+        pendingChanges.clear();
+
+        try {
+          const serialized = await api.liveUpdate(batch);
+          liveUpdateDirtyRef.current = true;
+
+          // Refresh renderer graph + fileContents so the visual UI stays current
+          if (serialized) {
+            const result = deserializeIndexingResult(serialized, createCodeGraph);
+            setGraph(result.graph);
+            setFileContents(result.fileContents);
+          }
+
+          if (import.meta.env.DEV) {
+            console.log(`[prowl:live] updated ${batch.size} files`);
+          }
+        } catch (err) {
+          console.warn('[prowl:live] update failed:', err);
+        }
+      }, 800);
+    });
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const runPipeline = useCallback(async (
     file: File,
     onProgress: (progress: IndexingProgress) => void,
@@ -679,6 +724,41 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => {
       return { success: false, size: 0 };
     }
   }, [ensureWorker]);
+
+  // Auto-save snapshot every 5 minutes if live updates occurred
+  useEffect(() => {
+    const timer = setInterval(async () => {
+      if (liveUpdateDirtyRef.current && projectPath) {
+        try {
+          await saveSnapshot(projectPath);
+          liveUpdateDirtyRef.current = false;
+          if (import.meta.env.DEV) {
+            console.log('[prowl:live] auto-saved snapshot');
+          }
+        } catch {
+          /* auto-save is best-effort */
+        }
+      }
+    }, 5 * 60 * 1000);
+
+    return () => clearInterval(timer);
+  }, [projectPath, saveSnapshot]);
+
+  // Save snapshot on app close (best-effort)
+  useEffect(() => {
+    if (!window.prowl?.onSaveSnapshot) return;
+
+    window.prowl.onSaveSnapshot(async () => {
+      if (liveUpdateDirtyRef.current && projectPath) {
+        try {
+          await saveSnapshot(projectPath);
+          liveUpdateDirtyRef.current = false;
+        } catch {
+          /* best-effort on close */
+        }
+      }
+    });
+  }, [projectPath, saveSnapshot]);
 
   const loadSnapshot = useCallback(async (
     path: string,

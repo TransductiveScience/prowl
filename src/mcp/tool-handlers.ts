@@ -164,11 +164,27 @@ async function dispatch(
       }
 
       if (!p.type || p.type === 'symbol') {
-        const rows = await api.runQuery(`
-          MATCH (n) WHERE n.name = '${escaped}' OR n.id = '${escaped}'
-          RETURN n.id AS id, n.name AS name, n.filePath AS filePath, label(n) AS nodeType
-          LIMIT 5
-        `);
+        let rows: any[] = [];
+
+        // Auto-detect file paths (contains / or .)
+        if (p.target.includes('/') || p.target.includes('.')) {
+          rows = await api.runQuery(`
+            MATCH (n) WHERE n.filePath IS NOT NULL
+              AND (n.filePath = '${escaped}' OR n.filePath CONTAINS '${escaped}')
+            RETURN n.id AS id, n.name AS name, n.filePath AS filePath, label(n) AS nodeType
+            LIMIT 10
+          `);
+        }
+
+        // Fall back to name/id search
+        if (rows.length === 0) {
+          rows = await api.runQuery(`
+            MATCH (n) WHERE n.name = '${escaped}' OR n.id = '${escaped}'
+            RETURN n.id AS id, n.name AS name, n.filePath AS filePath, label(n) AS nodeType
+            LIMIT 5
+          `);
+        }
+
         if (rows.length > 0) {
           return { kind: 'symbol', results: rows };
         }
@@ -184,28 +200,41 @@ async function dispatch(
       const relTypes = (p.relationTypes?.length ? p.relationTypes : ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS'])
         .map(t => `'${t}'`).join(', ');
 
-      const findStmt = p.target.includes('/')
-        ? `MATCH (n) WHERE n.filePath IS NOT NULL AND n.filePath CONTAINS '${escaped}' RETURN n.id AS id, label(n) AS nodeType LIMIT 1`
-        : `MATCH (n) WHERE n.name = '${escaped}' RETURN n.id AS id, label(n) AS nodeType LIMIT 1`;
+      // Step 1: Find target node(s)
+      // For file paths: find File AND all symbols defined in it
+      let targetIds: string[] = [];
 
-      const foundNodes = await api.runQuery(findStmt);
-      if (foundNodes.length === 0) {
+      if (p.target.includes('/')) {
+        const fileNodes = await api.runQuery(`
+          MATCH (n) WHERE n.filePath IS NOT NULL AND n.filePath CONTAINS '${escaped}'
+          RETURN n.id AS id LIMIT 50
+        `);
+        targetIds = fileNodes.map((r: any) => r.id);
+      } else {
+        const symbolNodes = await api.runQuery(`
+          MATCH (n) WHERE n.name = '${escaped}'
+          RETURN n.id AS id LIMIT 10
+        `);
+        targetIds = symbolNodes.map((r: any) => r.id);
+      }
+
+      if (targetIds.length === 0) {
         return { error: `Could not find "${p.target}" in the codebase.` };
       }
 
-      const nodeId = foundNodes[0].id || foundNodes[0][0];
-      const escapedId = String(nodeId).replace(/'/g, "''");
+      // Step 2: Query impact for ALL matched nodes
+      const idList = targetIds.map(id => `'${String(id).replace(/'/g, "''")}'`).join(', ');
 
       const query = dir === 'upstream'
-        ? `MATCH (affected)-[r:CodeEdge]->(target {id: '${escapedId}'})
-           WHERE r.type IN [${relTypes}]
-           RETURN affected.id AS id, affected.name AS name, label(affected) AS nodeType,
-                  affected.filePath AS filePath, r.type AS edgeType
+        ? `MATCH (affected)-[r:CodeEdge]->(target)
+           WHERE target.id IN [${idList}] AND r.type IN [${relTypes}]
+           RETURN DISTINCT affected.id AS id, affected.name AS name,
+                  label(affected) AS nodeType, affected.filePath AS filePath, r.type AS edgeType
            LIMIT 100`
-        : `MATCH (target {id: '${escapedId}'})-[r:CodeEdge]->(affected)
-           WHERE r.type IN [${relTypes}]
-           RETURN affected.id AS id, affected.name AS name, label(affected) AS nodeType,
-                  affected.filePath AS filePath, r.type AS edgeType
+        : `MATCH (target)-[r:CodeEdge]->(affected)
+           WHERE target.id IN [${idList}] AND r.type IN [${relTypes}]
+           RETURN DISTINCT affected.id AS id, affected.name AS name,
+                  label(affected) AS nodeType, affected.filePath AS filePath, r.type AS edgeType
            LIMIT 100`;
 
       const affected = await api.runQuery(query);

@@ -5,7 +5,7 @@
  * embedded source code never breaks the field boundary.
  */
 
-import { CodeGraph, GraphNode, NodeLabel } from '../graph/types';
+import { CodeGraph, GraphNode } from '../graph/types';
 import { NODE_TABLES, NodeTableName } from './schema';
 
 /* ── Field-level utilities ───────────────────────────── */
@@ -88,6 +88,9 @@ export interface CSVData {
   relCSV: string;
 }
 
+/* Tables that have the isExported column (matches schema DDL) */
+const TABLES_WITH_IS_EXPORTED = new Set(['Function', 'Class', 'Interface', 'Method', 'CodeElement']);
+
 /* ── Per-table builders ──────────────────────────────── */
 
 function fileNodeCSV(items: GraphNode[], sourceMap: Map<string, string>): string {
@@ -121,25 +124,32 @@ function folderNodeCSV(items: GraphNode[]): string {
 
 function symbolNodeCSV(
   items: GraphNode[],
-  kind: NodeLabel,
+  kind: string,
   sourceMap: Map<string, string>,
 ): string {
-  const rows: string[] = ['id,name,filePath,startLine,endLine,isExported,content'];
+  const hasExported = TABLES_WITH_IS_EXPORTED.has(kind);
+  const header = hasExported
+    ? 'id,name,filePath,startLine,endLine,isExported,content'
+    : 'id,name,filePath,startLine,endLine,content';
+  const rows: string[] = [header];
   const visited = new Set<string>();
   for (const nd of items) {
     if (nd.label !== kind) continue;
     if (visited.has(nd.id)) continue;
     visited.add(nd.id);
     const body = extractSourceText(nd, sourceMap);
-    rows.push([
+    const fields = [
       csvQuote(nd.id),
       csvQuote(nd.properties.name || ''),
       csvQuote(nd.properties.filePath || ''),
       numVal(nd.properties.startLine, -1),
       numVal(nd.properties.endLine, -1),
-      nd.properties.isExported ? 'true' : 'false',
-      csvQuote(body),
-    ].join(','));
+    ];
+    if (hasExported) {
+      rows.push([...fields, nd.properties.isExported ? 'true' : 'false', csvQuote(body)].join(','));
+    } else {
+      rows.push([...fields, csvQuote(body)].join(','));
+    }
   }
   return rows.join('\n');
 }
@@ -221,9 +231,10 @@ export function generateAllCSVs(
   nodeCSVs.set('File', fileNodeCSV(allNodes, fileContents));
   nodeCSVs.set('Folder', folderNodeCSV(allNodes));
 
-  const symbolKinds: NodeLabel[] = ['Function', 'Class', 'Interface', 'Method', 'CodeElement'];
+  const SPECIAL_TABLES = new Set(['File', 'Folder', 'Community', 'Process']);
+  const symbolKinds = NODE_TABLES.filter(t => !SPECIAL_TABLES.has(t));
   for (const kind of symbolKinds) {
-    nodeCSVs.set(kind as NodeTableName, symbolNodeCSV(allNodes, kind, fileContents));
+    nodeCSVs.set(kind, symbolNodeCSV(allNodes, kind, fileContents));
   }
 
   nodeCSVs.set('Community', communityNodeCSV(allNodes));

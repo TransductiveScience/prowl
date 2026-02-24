@@ -10,6 +10,7 @@ import {
   NODE_TABLES,
   EDGE_TABLE_NAME,
   SCHEMA_QUERIES,
+  REL_SCHEMA_QUERIES,
   VECTOR_TABLE,
   NodeTableName,
 } from './schema';
@@ -49,9 +50,14 @@ const makeCopyStatement = (table: NodeTableName, csvPath: string): string => {
       return `COPY ${escaped}(id, label, heuristicLabel, keywords, description, enrichedBy, cohesion, symbolCount) FROM "${csvPath}" ${CSV_IMPORT_OPTS}`;
     case 'Process':
       return `COPY ${escaped}(id, label, heuristicLabel, processType, stepCount, communities, entryPointId, terminalId) FROM "${csvPath}" ${CSV_IMPORT_OPTS}`;
-    default:
-      /* Default: shared columns for all code-element tables */
-      return `COPY ${escaped}(id, name, filePath, startLine, endLine, isExported, content) FROM "${csvPath}" ${CSV_IMPORT_OPTS}`;
+    default: {
+      /* Tables with isExported column (matches schema DDL) */
+      const TABLES_WITH_IS_EXPORTED = new Set(['Function', 'Class', 'Interface', 'Method', 'CodeElement']);
+      if (TABLES_WITH_IS_EXPORTED.has(table)) {
+        return `COPY ${escaped}(id, name, filePath, startLine, endLine, isExported, content) FROM "${csvPath}" ${CSV_IMPORT_OPTS}`;
+      }
+      return `COPY ${escaped}(id, name, filePath, startLine, endLine, content) FROM "${csvPath}" ${CSV_IMPORT_OPTS}`;
+    }
   }
 };
 
@@ -125,9 +131,39 @@ export const loadGraphToKuzu = async (
   graph: CodeGraph,
   fileContents: Map<string, string>,
 ) => {
-  /* Drop existing data so we start fresh */
-  await closeKuzu();
-  const { conn, kuzu } = await initKuzu();
+  let conn: any;
+  let kuzu: any;
+
+  if (connection && database) {
+    /* Reuse existing DB — purge data and rebuild the REL TABLE.
+       KuzuDB WASM has a bug where edges FROM certain node tables silently
+       fail after DETACH DELETE + reimport. Dropping and recreating the
+       REL TABLE forces fresh internal indices. */
+    conn = connection;
+    kuzu = wasmLib;
+
+    /* 1. Drop the REL TABLE (also removes all edge data) */
+    try { await conn.query(`DROP TABLE ${EDGE_TABLE_NAME}`); } catch { /* noop */ }
+
+    /* 2. Delete all nodes from every table */
+    for (const table of NODE_TABLES) {
+      try {
+        await conn.query(`MATCH (n:${quoteName(table)}) DELETE n`);
+      } catch { /* table may be empty */ }
+    }
+
+    /* 3. Recreate the REL TABLE with fresh internal state */
+    for (const ddl of REL_SCHEMA_QUERIES) {
+      await conn.query(ddl);
+    }
+
+    if (import.meta.env.DEV) console.log('[prowl:kuzu] cleared data + rebuilt REL TABLE for reload');
+  } else {
+    /* First load: bootstrap WASM engine + schema */
+    const result = await initKuzu();
+    conn = result.conn;
+    kuzu = result.kuzu;
+  }
 
   try {
     if (import.meta.env.DEV) console.log(`[prowl:kuzu] generating CSVs for ${graph.nodeCount} nodes`);

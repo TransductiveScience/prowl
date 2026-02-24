@@ -129,6 +129,8 @@ export async function processParsing(
       continue;
     }
 
+    const seenInFile = new Set<string>();
+
     for (const m of matches) {
       const caps: Record<string, any> = {};
       for (const c of m.captures) caps[c.name] = c.node;
@@ -140,6 +142,8 @@ export async function processParsing(
       if (!nameNode) continue;
 
       const symName = nameNode.text;
+      if (seenInFile.has(symName)) continue;
+      seenInFile.add(symName);
       const tag = labelFromCaptures(caps);
       const symId = generateId(tag, `${src.path}:${symName}`);
 

@@ -7,7 +7,7 @@ import type { CodeGraph, GraphNode, GraphRelationship } from '../graph/types';
  */
 export function buildDirectoryTree(graph: CodeGraph, sourcePaths: string[]): void {
   for (const raw of sourcePaths) {
-    const parts = raw.split('/');
+    const parts = raw.split(/[/\\]/);
     let running = '';
     let parentId = '';
 
