@@ -1,23 +1,23 @@
 import { NodeLabel } from '../core/graph/types';
 
 const NODE_CONFIG: { label: NodeLabel; color: string; size: number }[] = [
-  { label: 'Project',     color: '#D4A868', size: 10 },
-  { label: 'Package',     color: '#C0986C', size: 8 },
-  { label: 'Module',      color: '#A09880', size: 7 },
-  { label: 'Folder',      color: '#D4A868', size: 6 },
-  { label: 'File',        color: '#6AAAD4', size: 5 },
-  { label: 'Class',       color: '#D08060', size: 7 },
-  { label: 'Function',    color: '#88B878', size: 4 },
-  { label: 'Method',      color: '#60B8A0', size: 4 },
-  { label: 'Variable',    color: '#808080', size: 2 },
-  { label: 'Interface',   color: '#C080A0', size: 6 },
-  { label: 'Enum',        color: '#CCA060', size: 5 },
-  { label: 'Decorator',   color: '#C89860', size: 2 },
-  { label: 'Import',      color: '#808080', size: 2 },
-  { label: 'Type',        color: '#A088B8', size: 4 },
-  { label: 'CodeElement', color: '#808080', size: 2 },
-  { label: 'Community',   color: '#D4A868', size: 0 },
-  { label: 'Process',     color: '#C87070', size: 0 },
+  { label: 'Project',     color: '#907040', size: 10 },
+  { label: 'Package',     color: '#806838', size: 8 },
+  { label: 'Module',      color: '#687060', size: 7 },
+  { label: 'Folder',      color: '#A08050', size: 6 },
+  { label: 'File',        color: '#7094A8', size: 5 },
+  { label: 'Class',       color: '#B85A4A', size: 7 },
+  { label: 'Function',    color: '#4A8E6A', size: 4 },
+  { label: 'Method',      color: '#3A8E80', size: 4 },
+  { label: 'Variable',    color: '#606060', size: 2 },
+  { label: 'Interface',   color: '#9A5A80', size: 6 },
+  { label: 'Enum',        color: '#B89040', size: 5 },
+  { label: 'Decorator',   color: '#907830', size: 2 },
+  { label: 'Import',      color: '#505050', size: 2 },
+  { label: 'Type',        color: '#7E60A0', size: 4 },
+  { label: 'CodeElement', color: '#606060', size: 2 },
+  { label: 'Community',   color: '#907040', size: 0 },
+  { label: 'Process',     color: '#B05050', size: 0 },
 ];
 
 export const NODE_COLORS: Record<NodeLabel, string> = NODE_CONFIG.reduce(
@@ -31,22 +31,22 @@ export const NODE_SIZES: Record<NodeLabel, number> = NODE_CONFIG.reduce(
 );
 
 export const MODULE_PALETTE = [
-  '#6AAAD4',
-  '#D08060',
-  '#88B878',
-  '#CCA060',
-  '#60B8A0',
-  '#D4A868',
-  '#A088B8',
-  '#6098B0',
-  '#C080A0',
-  '#70B898',
-  '#C87070',
-  '#60B0B8',
-  '#C89860',
-  '#B89068',
-  '#9080A8',
-  '#C89860',
+  '#7094A8',
+  '#B85A4A',
+  '#4A8E6A',
+  '#B89040',
+  '#3A8E80',
+  '#A08050',
+  '#7E60A0',
+  '#5A7888',
+  '#9A5A80',
+  '#4A8A78',
+  '#B05050',
+  '#4A8898',
+  '#A87838',
+  '#907858',
+  '#6A5888',
+  '#907040',
 ];
 
 export const getModuleColor = (communityIndex: number): string => {
@@ -99,10 +99,10 @@ export const DEFAULT_VISIBLE_EDGES: EdgeType[] = [
 ];
 
 export const EDGE_INFO: Record<EdgeType, { color: string; label: string }> = {
-  CONTAINS:   { color: '#689878', label: 'Contains' },
-  DEFINES:    { color: '#6098B0', label: 'Defines' },
-  IMPORTS:    { color: '#9080A8', label: 'Imports' },
-  CALLS:      { color: '#B08090', label: 'Calls' },
-  EXTENDS:    { color: '#C08870', label: 'Extends' },
-  IMPLEMENTS: { color: '#B07088', label: 'Implements' },
+  CONTAINS:   { color: '#5A7A60', label: 'Contains' },
+  DEFINES:    { color: '#5A8090', label: 'Defines' },
+  IMPORTS:    { color: '#6A7090', label: 'Imports' },
+  CALLS:      { color: '#8A6878', label: 'Calls' },
+  EXTENDS:    { color: '#986850', label: 'Extends' },
+  IMPLEMENTS: { color: '#885868', label: 'Implements' },
 };

@@ -35,17 +35,17 @@
   --color-text-muted: rgba(255, 255, 255, 0.35);
 
   /* Primary accent */
-  --color-accent: #0A84FF;
-  --color-accent-dim: #0070E0;
+  --color-accent: #5A9EAA;
+  --color-accent-dim: #4A8898;
 
   /* Graph node palette */
-  --color-node-file: #6AAAD4;
-  --color-node-folder: #D4A868;
-  --color-node-class: #D08060;
-  --color-node-function: #88B878;
-  --color-node-interface: #C080A0;
-  --color-node-import: #808080;
-  --color-node-method: #60B8A0;
+  --color-node-file: #7094A8;
+  --color-node-folder: #A08050;
+  --color-node-class: #B85A4A;
+  --color-node-function: #4A8E6A;
+  --color-node-interface: #9A5A80;
+  --color-node-import: #505050;
+  --color-node-method: #3A8E80;
 
   /* Typography stacks */
   --font-sans: 'Outfit', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;

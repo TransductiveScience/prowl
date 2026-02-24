@@ -54,12 +54,12 @@ const computeNodeMass = (nodeType: NodeLabel, nodeTotal: number): number => {
 };
 
 const EDGE_PALETTE = new Map<string, { color: string; sizeMultiplier: number }>([
-  ['CONTAINS',   { color: '#2d5a3d', sizeMultiplier: 0.4 }],
-  ['DEFINES',    { color: '#0e7490', sizeMultiplier: 0.5 }],
-  ['IMPORTS',    { color: '#1d4ed8', sizeMultiplier: 0.6 }],
-  ['CALLS',      { color: '#7c3aed', sizeMultiplier: 0.8 }],
-  ['EXTENDS',    { color: '#c2410c', sizeMultiplier: 1.0 }],
-  ['IMPLEMENTS', { color: '#be185d', sizeMultiplier: 0.9 }],
+  ['CONTAINS',   { color: '#3D5A48', sizeMultiplier: 0.4 }],
+  ['DEFINES',    { color: '#3A6070', sizeMultiplier: 0.5 }],
+  ['IMPORTS',    { color: '#4A5578', sizeMultiplier: 0.6 }],
+  ['CALLS',      { color: '#6A5070', sizeMultiplier: 0.8 }],
+  ['EXTENDS',    { color: '#804A38', sizeMultiplier: 1.0 }],
+  ['IMPLEMENTS', { color: '#704050', sizeMultiplier: 0.9 }],
 ]);
 
 const FALLBACK_EDGE_STYLE = { color: '#4a4a5a', sizeMultiplier: 0.5 };

@@ -11,9 +11,9 @@ import { NodeDisplayAttrs, EdgeDisplayAttrs } from '../lib/graph-adapter';
 import type { NodeAnimation } from './useAppState';
 import type { EdgeType } from '../lib/constants';
 
-const DARK_BG_R = 18;
-const DARK_BG_G = 18;
-const DARK_BG_B = 28;
+const DARK_BG_R = 12;
+const DARK_BG_G = 12;
+const DARK_BG_B = 16;
 
 function parseHex(hex: string): [number, number, number] {
   const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
@@ -130,8 +130,8 @@ const SIGMA_INIT = {
   labelRenderedSizeThreshold: 8,
   labelDensity: 0.1,
   labelGridCellSize: 70,
-  defaultNodeColor: '#6b7280',
-  defaultEdgeColor: '#2a2a3a',
+  defaultNodeColor: '#585858',
+  defaultEdgeColor: '#282828',
   defaultEdgeType: 'curved' as const,
   minCameraRatio: 0.002,
   maxCameraRatio: 50,
@@ -167,7 +167,7 @@ function renderHoverTooltip(
   ctx.roundRect(cx - boxW / 2, cy - boxH / 2, boxW, boxH, corner);
   ctx.fill();
 
-  ctx.strokeStyle = data.color || '#6366f1';
+  ctx.strokeStyle = data.color || '#6A7090';
   ctx.lineWidth = 2;
   ctx.stroke();
 
@@ -178,7 +178,7 @@ function renderHoverTooltip(
 
   ctx.beginPath();
   ctx.arc(data.x, data.y, nodeRad + 4, 0, Math.PI * 2);
-  ctx.strokeStyle = data.color || '#6366f1';
+  ctx.strokeStyle = data.color || '#6A7090';
   ctx.lineWidth = 2;
   ctx.globalAlpha = 0.5;
   ctx.stroke();
@@ -195,10 +195,10 @@ const ANIM_CONFIG: Record<AnimKind, {
   colB: string | null;
   zIdx: number;
 }> = {
-  pulse:   { cycles: 4, baseScale: 1.5, amplitude: 0.8, colA: '#06b6d4', colB: null,    zIdx: 5 },
-  ripple:  { cycles: 4, baseScale: 1.3, amplitude: 1.2, colA: '#ef4444', colB: '#f87171', zIdx: 5 },
-  glow:    { cycles: 4, baseScale: 1.4, amplitude: 0.6, colA: '#a855f7', colB: '#c084fc', zIdx: 5 },
-  watcher: { cycles: 2, baseScale: 1.6, amplitude: 1.0, colA: '#30D158', colB: null,    zIdx: 6 },
+  pulse:   { cycles: 4, baseScale: 1.5, amplitude: 0.8, colA: '#5A9EAA', colB: null,    zIdx: 5 },
+  ripple:  { cycles: 4, baseScale: 1.3, amplitude: 1.2, colA: '#C05A4A', colB: '#D07868', zIdx: 5 },
+  glow:    { cycles: 4, baseScale: 1.4, amplitude: 0.6, colA: '#8A68A8', colB: '#A080B8', zIdx: 5 },
+  watcher: { cycles: 2, baseScale: 1.6, amplitude: 1.0, colA: '#4A9A68', colB: null,    zIdx: 6 },
 };
 
 function applyAnimation(
@@ -404,12 +404,12 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
 
         if (anyBR && !sel) {
           if (inBR) {
-            out.color = '#ef4444';
+            out.color = '#C05A4A';
             out.size = sz * 1.8;
             out.zIndex = 3;
             out.highlighted = true;
           } else if (inHL) {
-            out.color = '#06b6d4';
+            out.color = '#5A9EAA';
             out.size = sz * 1.4;
             out.zIndex = 2;
             out.highlighted = true;
@@ -423,7 +423,7 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
 
         if (anyHL && !sel) {
           if (inHL) {
-            out.color = '#06b6d4';
+            out.color = '#5A9EAA';
             out.size = sz * 1.6;
             out.zIndex = 2;
             out.highlighted = true;
@@ -485,11 +485,11 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
 
             if (srcOn && tgtOn) {
               const bothBlast = brSet.has(src) && brSet.has(tgt);
-              out.color = bothBlast ? '#ef4444' : '#06b6d4';
+              out.color = bothBlast ? '#C05A4A' : '#5A9EAA';
               out.size = Math.max(2, (data.size || 1) * 3);
               out.zIndex = 2;
             } else if (srcOn || tgtOn) {
-              out.color = dimColor('#06b6d4', 0.4);
+              out.color = dimColor('#5A9EAA', 0.4);
               out.size = 1;
               out.zIndex = 1;
             } else {

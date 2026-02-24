@@ -185,8 +185,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
           className="absolute inset-0"
           style={{
             background: `
-              radial-gradient(ellipse at 40% 60%, rgba(124, 58, 237, 0.02) 0%, transparent 50%),
-              radial-gradient(ellipse at 70% 30%, rgba(6, 182, 212, 0.015) 0%, transparent 50%),
+              radial-gradient(ellipse at 40% 60%, rgba(90, 70, 50, 0.03) 0%, transparent 50%),
+              radial-gradient(ellipse at 70% 30%, rgba(50, 70, 80, 0.025) 0%, transparent 50%),
               linear-gradient(to bottom, #08080c, #0c0c12)
             `
           }}
@@ -232,7 +232,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
           }}
           className={
             isAIHighlightsEnabled
-              ? 'w-8 h-8 flex items-center justify-center bg-violet-500/15 border border-violet-400/40 rounded text-violet-200 hover:bg-violet-500/20 transition-colors'
+              ? 'w-8 h-8 flex items-center justify-center bg-white/[0.06] border border-white/[0.15] rounded text-text-primary hover:bg-white/[0.10] transition-colors'
               : 'w-8 h-8 flex items-center justify-center rounded text-text-muted hover:bg-white/[0.08] hover:text-text-primary transition-colors'
           }
           title={isAIHighlightsEnabled ? 'Hide highlights' : 'Show highlights'}
@@ -289,7 +289,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
 
       {isLayoutRunning && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-1.5 glass-elevated rounded-md z-10 animate-fade-in">
-          <span className="inline-block w-4 h-[3px] bg-violet-400/70 rounded-full animate-pulse" />
+          <span className="inline-block w-4 h-[3px] bg-accent/70 rounded-full animate-pulse" />
           <span className="text-[11px] text-text-secondary">Arranging nodes...</span>
         </div>
       )}
