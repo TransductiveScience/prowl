@@ -62,6 +62,7 @@ interface UseSigmaReturn {
   containerRef: React.RefObject<HTMLDivElement>;
   sigmaRef: React.RefObject<Sigma | null>;
   setGraph: (graph: Graph<NodeDisplayAttrs, EdgeDisplayAttrs>) => void;
+  patchGraph: (mutator: (g: Graph<NodeDisplayAttrs, EdgeDisplayAttrs>) => void) => boolean;
   zoomIn: () => void;
   zoomOut: () => void;
   resetZoom: () => void;
@@ -623,6 +624,36 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
     inst.getCamera().animatedReset({ duration: 500 });
   }, [executeLayout, setSelectedNode]);
 
+  const patchGraph = useCallback((mutator: (g: Graph<NodeDisplayAttrs, EdgeDisplayAttrs>) => void): boolean => {
+    if (fa2Ref.current) return false; // unsafe to mutate while FA2 is running
+
+    const g = graphRef.current;
+    const inst = sigmaRef.current;
+    if (!g || !inst) return false;
+
+    /* Snapshot node set before mutation so we can diff afterwards */
+    const nodesBefore = new Set<string>();
+    g.forEachNode(nid => nodesBefore.add(nid));
+
+    mutator(g);
+
+    /* Sync restPositionsRef: add entries for new nodes, remove deleted ones */
+    const rest = restPositionsRef.current;
+    g.forEachNode(nid => {
+      if (!nodesBefore.has(nid)) {
+        rest.set(nid, { x: g.getNodeAttribute(nid, 'x'), y: g.getNodeAttribute(nid, 'y') });
+      }
+    });
+    for (const nid of nodesBefore) {
+      if (!g.hasNode(nid)) {
+        rest.delete(nid);
+      }
+    }
+
+    inst.refresh();
+    return true;
+  }, []);
+
   const focusNode = useCallback((nodeId: string) => {
     const inst = sigmaRef.current;
     const g = graphRef.current;
@@ -705,6 +736,7 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
     containerRef,
     sigmaRef,
     setGraph,
+    patchGraph,
     zoomIn,
     zoomOut,
     resetZoom,

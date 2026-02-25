@@ -1,8 +1,8 @@
-import { useEffect, useCallback, useMemo, useState, forwardRef, useImperativeHandle } from 'react';
+import { useEffect, useCallback, useMemo, useState, useRef, forwardRef, useImperativeHandle } from 'react';
 import { ZoomIn, ZoomOut, Maximize2, Focus, RotateCcw, Play, Pause, Eye, EyeOff } from 'lucide-react';
 import { useSigma } from '../hooks/useSigma';
 import { useAppState } from '../hooks/useAppState';
-import { toSigmaGraph, filterGraphByDepth, NodeDisplayAttrs, EdgeDisplayAttrs } from '../lib/graph-adapter';
+import { toSigmaGraph, patchSigmaGraph, filterGraphByDepth, NodeDisplayAttrs, EdgeDisplayAttrs } from '../lib/graph-adapter';
 import { QueryFAB } from './QueryFAB';
 import Graph from 'graphology';
 
@@ -85,6 +85,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
     containerRef,
     sigmaRef,
     setGraph: setSigmaGraph,
+    patchGraph,
     zoomIn,
     zoomOut,
     resetZoom,
@@ -127,9 +128,15 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
     }
   }), [setHighlightedNodeIds, graph, setSigmaGraph]);
 
-  /* Rebuild the sigma graph each time the project graph changes */
+  /* Track first vs subsequent graph loads for incremental patching */
+  const isInitialGraphRef = useRef(true);
+
+  /* Rebuild or patch the sigma graph each time the project graph changes */
   useEffect(() => {
-    if (!graph) return;
+    if (!graph) {
+      isInitialGraphRef.current = true;
+      return;
+    }
 
     /* Map each node to its community via MEMBER_OF relationships */
     const communityMemberships = new Map<string, number>();
@@ -143,9 +150,21 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
       }
     });
 
-    const sigmaGraph = toSigmaGraph(graph, communityMemberships);
-    setSigmaGraph(sigmaGraph);
-  }, [graph, setSigmaGraph]);
+    if (isInitialGraphRef.current) {
+      /* First load: full rebuild with layout */
+      const sigmaGraph = toSigmaGraph(graph, communityMemberships);
+      setSigmaGraph(sigmaGraph);
+      isInitialGraphRef.current = false;
+    } else {
+      /* Subsequent live updates: try incremental patch */
+      const patched = patchGraph(g => patchSigmaGraph(g, graph, communityMemberships));
+      if (!patched) {
+        /* FA2 still running — fall back to full rebuild */
+        const sigmaGraph = toSigmaGraph(graph, communityMemberships);
+        setSigmaGraph(sigmaGraph);
+      }
+    }
+  }, [graph, setSigmaGraph, patchGraph]);
 
   useEffect(() => {
     const sigma = sigmaRef.current;

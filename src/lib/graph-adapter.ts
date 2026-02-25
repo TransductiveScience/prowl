@@ -251,6 +251,174 @@ export const toSigmaGraph = (
   return graph;
 };
 
+/**
+ * Patch an existing graphology instance in-place with data from a new CodeGraph.
+ * Preserves x/y positions for nodes that already exist so the layout stays stable.
+ * New nodes are positioned near their parent or community cluster center.
+ */
+export const patchSigmaGraph = (
+  existing: Graph<NodeDisplayAttrs, EdgeDisplayAttrs>,
+  codeGraph: CodeGraph,
+  communityMemberships?: Map<string, number>,
+): void => {
+  const newNodeIds = new Set(codeGraph.nodes.map(n => n.id));
+  const nodeTotal = codeGraph.nodes.length;
+  const nodeMap = new Map(codeGraph.nodes.map(n => [n.id, n]));
+
+  /* ── Build parent-child map for positioning new nodes ─────── */
+  const childToParent = new Map<string, string>();
+  const hierarchyRelations = new Set(['CONTAINS', 'DEFINES', 'IMPORTS']);
+  codeGraph.relationships.forEach(rel => {
+    if (hierarchyRelations.has(rel.type)) {
+      childToParent.set(rel.targetId, rel.sourceId);
+    }
+  });
+
+  /* ── Community cluster centers (reuses toSigmaGraph logic) ── */
+  const spread = Math.sqrt(nodeTotal) * 40;
+  const clusterJitter = Math.sqrt(nodeTotal) * 1.5;
+  const childJitter = Math.sqrt(nodeTotal) * 3;
+  const clusterCenters = new Map<number, { x: number; y: number }>();
+  if (communityMemberships && communityMemberships.size > 0) {
+    const communities = new Set(communityMemberships.values());
+    const communityCount = communities.size;
+    const clusterSpread = spread * 0.8;
+    const cols = Math.ceil(Math.sqrt(communityCount));
+    const rows = Math.ceil(communityCount / cols);
+    const spacing = clusterSpread * 2 / Math.max(cols, 1);
+    let idx = 0;
+    communities.forEach(communityId => {
+      const col = idx % cols;
+      const row = Math.floor(idx / cols);
+      clusterCenters.set(communityId, {
+        x: (col - cols / 2) * spacing,
+        y: (row - rows / 2) * spacing,
+      });
+      idx++;
+    });
+  }
+
+  const symbolTypes = new Set(['Function', 'Class', 'Method', 'Interface']);
+
+  /* ── 1. Remove stale nodes (drops connected edges automatically) ── */
+  const existingNodeIds: string[] = [];
+  existing.forEachNode(nid => existingNodeIds.push(nid));
+  for (const nid of existingNodeIds) {
+    if (!newNodeIds.has(nid)) {
+      existing.dropNode(nid);
+    }
+  }
+
+  /* ── 2. Update existing nodes & add new nodes ────────────── */
+  for (const node of codeGraph.nodes) {
+    const baseSize = NODE_SIZES[node.label] || 8;
+    const scaledSize = computeScaledSize(baseSize, nodeTotal);
+    const communityIndex = communityMemberships?.get(node.id);
+    const hasCommunity = communityIndex !== undefined;
+    const usesCommunityColor = hasCommunity && symbolTypes.has(node.label);
+    const nodeColor = usesCommunityColor
+      ? getModuleColor(communityIndex!)
+      : NODE_COLORS[node.label] || '#9ca3af';
+
+    if (existing.hasNode(node.id)) {
+      /* Update attributes but preserve x, y */
+      existing.mergeNodeAttributes(node.id, {
+        size: scaledSize,
+        color: nodeColor,
+        label: node.properties.name,
+        nodeType: node.label,
+        filePath: node.properties.filePath,
+        startLine: node.properties.startLine,
+        endLine: node.properties.endLine,
+        mass: computeNodeMass(node.label, nodeTotal),
+        community: communityIndex,
+        communityColor: hasCommunity ? getModuleColor(communityIndex!) : undefined,
+        type: node.label === 'Folder' ? 'triangle' : undefined,
+      });
+    } else {
+      /* Position new node near parent or community center */
+      let x: number, y: number;
+      const clusterCenter = communityIndex !== undefined ? clusterCenters.get(communityIndex) : null;
+
+      if (clusterCenter && symbolTypes.has(node.label)) {
+        x = clusterCenter.x + (Math.random() - 0.5) * clusterJitter;
+        y = clusterCenter.y + (Math.random() - 0.5) * clusterJitter;
+      } else {
+        const parentId = childToParent.get(node.id);
+        const parentPos = parentId && existing.hasNode(parentId)
+          ? { x: existing.getNodeAttribute(parentId, 'x'), y: existing.getNodeAttribute(parentId, 'y') }
+          : null;
+
+        if (parentPos) {
+          x = parentPos.x + (Math.random() - 0.5) * childJitter;
+          y = parentPos.y + (Math.random() - 0.5) * childJitter;
+        } else {
+          x = (Math.random() - 0.5) * spread * 0.5;
+          y = (Math.random() - 0.5) * spread * 0.5;
+        }
+      }
+
+      existing.addNode(node.id, {
+        x,
+        y,
+        size: scaledSize,
+        color: nodeColor,
+        label: node.properties.name,
+        nodeType: node.label,
+        filePath: node.properties.filePath,
+        startLine: node.properties.startLine,
+        endLine: node.properties.endLine,
+        hidden: false,
+        mass: computeNodeMass(node.label, nodeTotal),
+        community: communityIndex,
+        communityColor: hasCommunity ? getModuleColor(communityIndex!) : undefined,
+        type: node.label === 'Folder' ? 'triangle' : undefined,
+      });
+    }
+  }
+
+  /* ── 3. Sync edges: build set of desired edges, remove stale, add new ── */
+  const edgeBaseSize = nodeTotal > 20000 ? 0.4 : nodeTotal > 5000 ? 0.6 : 1.0;
+
+  /* Build a set of desired edge keys */
+  const desiredEdges = new Set<string>();
+  codeGraph.relationships.forEach(rel => {
+    if (existing.hasNode(rel.sourceId) && existing.hasNode(rel.targetId)) {
+      desiredEdges.add(`${rel.sourceId}→${rel.targetId}`);
+    }
+  });
+
+  /* Remove stale edges */
+  const existingEdgeKeys: { key: string; src: string; tgt: string }[] = [];
+  existing.forEachEdge((eid, _attrs, src, tgt) => {
+    existingEdgeKeys.push({ key: `${src}→${tgt}`, src, tgt });
+  });
+  for (const { key, src, tgt } of existingEdgeKeys) {
+    if (!desiredEdges.has(key)) {
+      if (existing.hasEdge(src, tgt)) {
+        existing.dropEdge(src, tgt);
+      }
+    }
+  }
+
+  /* Add new edges */
+  codeGraph.relationships.forEach(rel => {
+    if (existing.hasNode(rel.sourceId) && existing.hasNode(rel.targetId)) {
+      if (!existing.hasEdge(rel.sourceId, rel.targetId)) {
+        const style = EDGE_PALETTE.get(rel.type) ?? FALLBACK_EDGE_STYLE;
+        const curvature = 0.12 + (Math.random() * 0.08);
+        existing.addEdge(rel.sourceId, rel.targetId, {
+          size: edgeBaseSize * style.sizeMultiplier,
+          color: style.color,
+          relationType: rel.type,
+          type: 'curved',
+          curvature,
+        });
+      }
+    }
+  });
+};
+
 export const filterGraphByLabels = (
   graph: Graph<NodeDisplayAttrs, EdgeDisplayAttrs>,
   visibleLabels: NodeLabel[]
