@@ -99,7 +99,7 @@ export const initKuzu = async () => {
       await wasmLib.init();
     }
 
-    const POOL_BYTES = 512 * 1024 * 1024;
+    const POOL_BYTES = 1024 * 1024 * 1024; // 1 GB — 512 MB was too small for large codebases
     database = new wasmLib.Database(':memory:', POOL_BYTES);
     connection = new wasmLib.Connection(database);
 
@@ -134,36 +134,16 @@ export const loadGraphToKuzu = async (
   let conn: any;
   let kuzu: any;
 
-  if (connection && database) {
-    /* Reuse existing DB — purge data and rebuild the REL TABLE.
-       KuzuDB WASM has a bug where edges FROM certain node tables silently
-       fail after DETACH DELETE + reimport. Dropping and recreating the
-       REL TABLE forces fresh internal indices. */
-    conn = connection;
-    kuzu = wasmLib;
+  /* Always start fresh: close the old DB so the buffer pool is fully
+     reclaimed, then create a new instance. The old approach (DELETE +
+     DROP TABLE) left KuzuDB's buffer pool fragmented, which caused
+     OOM on large projects. */
+  await closeKuzu();
+  const result = await initKuzu();
+  conn = result.conn;
+  kuzu = result.kuzu;
 
-    /* 1. Drop the REL TABLE (also removes all edge data) */
-    try { await conn.query(`DROP TABLE ${EDGE_TABLE_NAME}`); } catch { /* noop */ }
-
-    /* 2. Delete all nodes from every table */
-    for (const table of NODE_TABLES) {
-      try {
-        await conn.query(`MATCH (n:${quoteName(table)}) DELETE n`);
-      } catch { /* table may be empty */ }
-    }
-
-    /* 3. Recreate the REL TABLE with fresh internal state */
-    for (const ddl of REL_SCHEMA_QUERIES) {
-      await conn.query(ddl);
-    }
-
-    if (import.meta.env.DEV) console.log('[prowl:kuzu] cleared data + rebuilt REL TABLE for reload');
-  } else {
-    /* First load: bootstrap WASM engine + schema */
-    const result = await initKuzu();
-    conn = result.conn;
-    kuzu = result.kuzu;
-  }
+  if (import.meta.env.DEV) console.log('[prowl:kuzu] fresh DB created for reload');
 
   try {
     if (import.meta.env.DEV) console.log(`[prowl:kuzu] generating CSVs for ${graph.nodeCount} nodes`);

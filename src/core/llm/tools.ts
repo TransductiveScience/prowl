@@ -537,35 +537,48 @@ function createOverviewTool(
   return tool(
     async () => {
       try {
-        const [clusterRows, processRows, depRows, critRows] = await Promise.all([
-          runQuery(`
-            MATCH (c:Community)
-            RETURN c.id AS id, c.label AS label, c.cohesion AS cohesion, c.symbolCount AS symbolCount, c.description AS description
-            ORDER BY c.symbolCount DESC
-            LIMIT 200
-          `),
-          runQuery(`
-            MATCH (p:Process)
-            RETURN p.id AS id, p.label AS label, p.processType AS type, p.stepCount AS stepCount, p.communities AS communities
-            ORDER BY p.stepCount DESC
-            LIMIT 200
-          `),
-          runQuery(`
+        /* Run sequentially to avoid concurrent buffer pool pressure in KuzuDB.
+           The cross-cluster dep query is rewritten to scan from communities
+           inward instead of doing a full CALLS cross-product. */
+        const clusterRows = await runQuery(`
+          MATCH (c:Community)
+          RETURN c.id AS id, c.label AS label, c.cohesion AS cohesion, c.symbolCount AS symbolCount, c.description AS description
+          ORDER BY c.symbolCount DESC
+          LIMIT 200
+        `);
+
+        const processRows = await runQuery(`
+          MATCH (p:Process)
+          RETURN p.id AS id, p.label AS label, p.processType AS type, p.stepCount AS stepCount, p.communities AS communities
+          ORDER BY p.stepCount DESC
+          LIMIT 200
+        `);
+
+        /* Rewritten: start from communities, walk inward via MEMBER_OF,
+           then check for CALLS edges between members of different clusters.
+           LIMIT on the inner scan prevents intermediate result explosion. */
+        let depRows: any[] = [];
+        try {
+          depRows = await runQuery(`
+            MATCH (c1:Community)<-[:CodeEdge {type: 'MEMBER_OF'}]-(a)
+            WITH c1, a LIMIT 500
             MATCH (a)-[:CodeEdge {type: 'CALLS'}]->(b)
-            MATCH (a)-[:CodeEdge {type: 'MEMBER_OF'}]->(c1:Community)
             MATCH (b)-[:CodeEdge {type: 'MEMBER_OF'}]->(c2:Community)
             WHERE c1.id <> c2.id
             RETURN c1.label AS \`from\`, c2.label AS \`to\`, COUNT(*) AS calls
             ORDER BY calls DESC
             LIMIT 15
-          `),
-          runQuery(`
-            MATCH (s)-[r:CodeEdge {type: 'STEP_IN_PROCESS'}]->(p:Process)
-            RETURN p.label AS label, COUNT(r) AS steps
-            ORDER BY steps DESC
-            LIMIT 10
-          `),
-        ]);
+          `);
+        } catch {
+          /* If still too large, return empty — better than crashing */
+        }
+
+        const critRows = await runQuery(`
+          MATCH (s)-[r:CodeEdge {type: 'STEP_IN_PROCESS'}]->(p:Process)
+          RETURN p.label AS label, COUNT(r) AS steps
+          ORDER BY steps DESC
+          LIMIT 10
+        `);
 
         const clusterTable = clusterRows.map((row: any) => {
           const lbl = pickField(row, 1, 'label');
