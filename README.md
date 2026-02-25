@@ -77,7 +77,7 @@ You're shipping with AI writing most of the code. Claude, Codex, or Gemini runni
 - **GitHub import** — Paste a repo URL to explore it without cloning.
 - **Smart search** — Find code by meaning, not just keywords.
 - **Works offline** — Everything runs locally on your machine. No data leaves your computer.
-- **MCP Server** — Expose your knowledge graph to Claude Code, Cursor, and other AI agents. They search your codebase through Prowl instead of reading every file.
+- **⚡ MCP Server** — Your AI coder queries Prowl's knowledge graph instead of reading hundreds of files. One tool call instead of thirty. **~98% fewer tokens.** Big codebases benefit the most. [Details below →](#mcp-let-your-ai-coder-use-prowls-brain)
 
 ---
 
@@ -89,11 +89,13 @@ You're shipping with AI writing most of the code. Claude, Codex, or Gemini runni
 
 Your AI coding agent (Claude Code, Cursor, etc.) connects to Prowl and queries the knowledge graph directly — instead of reading hundreds of files to understand your project.
 
+**This is Prowl's killer feature.** The bigger your codebase, the more you save.
+
 </div>
 
 ### The Problem
 
-Every time an AI coder needs to understand your project, it reads files. Lots of files. Each file read costs tokens — and tokens cost money.
+Every time an AI coder needs to understand your project, it reads files. Lots of files. Each file read costs tokens — and tokens cost money. In a large codebase, your AI burns most of its budget just figuring out where things are.
 
 ```
 You: "What breaks if I refactor UserService?"
@@ -215,16 +217,34 @@ Go to the **[Releases page](https://github.com/neur0map/prowl/releases/latest)**
 
 ### macOS first launch
 
-The app isn't code-signed yet, so macOS will block it. To open it:
+Not code-signed yet, so macOS will block it. Pick one:
+
+#### Option A: Right-click to Open
 
 1. **Drag Prowl to Applications** like any other app
 2. **Right-click** the app and choose **Open**
 3. Click **Open** in the dialog that appears
 4. macOS will ask about **keychain access** — click **Always Allow** (this stores your settings securely)
 
-That's it. You only need to do this once.
+#### Option B: Remove the quarantine flag
 
-> Code signing is coming soon. Once signed, these steps won't be needed.
+If right-click doesn't work, open Terminal and run:
+
+```bash
+xattr -rd com.apple.quarantine /Applications/Prowl.app
+```
+
+Permission error? Use `sudo`:
+
+```bash
+sudo xattr -rd com.apple.quarantine /Applications/Prowl.app
+```
+
+#### Option C: Build from source
+
+Don't trust unsigned binaries? Build it yourself — see **[For Developers](#for-developers)** below.
+
+You only need to do this once. Code signing is coming soon.
 
 ---
 
