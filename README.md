@@ -22,6 +22,8 @@ See what your AI coder is actually doing — a live visual map of your entire pr
 
 <img src="public/media/focus-graph.png" alt="Prowl Focus Graph" width="800" />
 
+[![Watch the demo](https://img.youtube.com/vi/y2Gu8HwQ68I/maxresdefault.jpg)](https://youtu.be/y2Gu8HwQ68I)
+
 </div>
 
 ---
