@@ -139,10 +139,21 @@ const workerApi = {
           nodesCreated: result.graph.nodeCount,
         },
       });
-      
+
       const kuzu = await getKuzuAdapter();
-      await kuzu.loadGraphToKuzu(result.graph, result.fileContents);
-      
+      await kuzu.loadGraphToKuzu(result.graph, result.fileContents, (pct, msg) => {
+        onProgress({
+          phase: 'complete',
+          percent: 98 + Math.round(pct * 0.02),
+          message: msg,
+          stats: {
+            filesProcessed: result.graph.nodeCount,
+            totalFiles: result.graph.nodeCount,
+            nodesCreated: result.graph.nodeCount,
+          },
+        });
+      });
+
     } catch {
       /* KuzuDB unavailable — continue without graph queries */
     }
@@ -151,7 +162,7 @@ const workerApi = {
     if (clusteringConfig) {
       pendingEnrichmentConfig = clusteringConfig;
     }
-    
+
     return serializeIndexingResult(result);
   },
 
@@ -216,10 +227,21 @@ const workerApi = {
           nodesCreated: result.graph.nodeCount,
         },
       });
-      
+
       const kuzu = await getKuzuAdapter();
-      await kuzu.loadGraphToKuzu(result.graph, result.fileContents);
-      
+      await kuzu.loadGraphToKuzu(result.graph, result.fileContents, (pct, msg) => {
+        onProgress({
+          phase: 'complete',
+          percent: 98 + Math.round(pct * 0.02),
+          message: msg,
+          stats: {
+            filesProcessed: result.graph.nodeCount,
+            totalFiles: result.graph.nodeCount,
+            nodesCreated: result.graph.nodeCount,
+          },
+        });
+      });
+
     } catch {
       /* KuzuDB unavailable — continue without graph queries */
     }
@@ -228,7 +250,7 @@ const workerApi = {
     if (clusteringConfig) {
       pendingEnrichmentConfig = clusteringConfig;
     }
-    
+
     return serializeIndexingResult(result);
   },
 

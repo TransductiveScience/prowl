@@ -130,6 +130,7 @@ export const initKuzu = async () => {
 export const loadGraphToKuzu = async (
   graph: CodeGraph,
   fileContents: Map<string, string>,
+  onProgress?: (percent: number, message: string) => void,
 ) => {
   let conn: any;
   let kuzu: any;
@@ -191,6 +192,9 @@ export const loadGraphToKuzu = async (
 
     const REL_PATTERN = /"([^"]*)","([^"]*)","([^"]*)",([0-9.]+),"([^"]*)",([0-9-]+)/;
 
+    /* Report edge insertion progress every N edges and yield to the event loop */
+    const PROGRESS_INTERVAL = 200;
+
     for (let rIdx = 0; rIdx < relRows.length; rIdx++) {
       const row = relRows[rIdx];
       try {
@@ -231,6 +235,13 @@ export const loadGraphToKuzu = async (
             console.warn(`[prowl:kuzu] skipped: ${bucket} | "${m2[1]}" -> "${m2[2]}" | ${insertErr instanceof Error ? insertErr.message : String(insertErr)}`);
           }
         }
+      }
+
+      /* Periodic progress + yield so the UI thread stays responsive */
+      if (rIdx > 0 && rIdx % PROGRESS_INTERVAL === 0) {
+        const pct = Math.round((rIdx / totalRels) * 100);
+        onProgress?.(pct, `Inserting relationships (${rIdx}/${totalRels})...`);
+        await new Promise<void>(r => setTimeout(r, 0));
       }
     }
 
