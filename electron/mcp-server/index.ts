@@ -20,6 +20,8 @@ import { readFile } from 'fs/promises'
 import { join } from 'path'
 import { homedir } from 'os'
 import http from 'http'
+import { registerCodingTools } from './features.js'
+import { serveProwlMcpHttp } from './transport.js'
 
 /* ── Config ────────────────────────────────────────────── */
 
@@ -115,16 +117,20 @@ function callProwlApi(toolName: string, params: unknown): Promise<unknown> {
 
 /* ── Helper to format result as MCP text content ──────── */
 
-function textResult(data: unknown): { content: Array<{ type: 'text'; text: string }> } {
+function textResult(data: unknown) {
   const text = typeof data === 'string' ? data : JSON.stringify(data, null, 2)
-  return { content: [{ type: 'text' as const, text }] }
+  const structuredContent = data && typeof data === 'object' && !Array.isArray(data)
+    ? data as Record<string, unknown>
+    : { value: data }
+  return { content: [{ type: 'text' as const, text }], structuredContent }
 }
 
 /* ── MCP Server ────────────────────────────────────────── */
 
+export function createProwlServer(): McpServer {
 const server = new McpServer({
   name: 'prowl',
-  version: '1.0.0',
+  version: '0.5.0',
 })
 
 // Tool: prowl_status — health check
@@ -310,12 +316,18 @@ server.tool(
   },
 )
 
+registerCodingTools(server, callProwlApi)
+return server
+}
+
 /* ── Start ─────────────────────────────────────────────── */
 
 async function main(): Promise<void> {
-  await loadConnectionInfo()
-  const transport = new StdioServerTransport()
-  await server.connect(transport)
+  if (process.argv.includes('--http')) {
+    await serveProwlMcpHttp(createProwlServer)
+  } else {
+    await createProwlServer().connect(new StdioServerTransport())
+  }
 }
 
 main().catch((err) => {

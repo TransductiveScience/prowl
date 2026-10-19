@@ -65,6 +65,11 @@ const prowlApi = {
   onFileChanged: (cb: (data: { filepath: string; type: string; content: string | null }) => void) => {
     ipcRenderer.on('mcp:file-changed', (_, data) => cb(data))
   },
+  onCodingEvent: (cb: (event: { eventId: string; phase: string; files: string[] }) => void): (() => void) => {
+    const listener = (_: Electron.IpcRendererEvent, event: { eventId: string; phase: string; files: string[] }) => cb(event)
+    ipcRenderer.on('mcp:coding-event', listener)
+    return () => ipcRenderer.removeListener('mcp:coding-event', listener)
+  },
   onSaveSnapshot: (cb: () => void) => {
     ipcRenderer.on('mcp:save-snapshot', () => cb())
   },
