@@ -536,6 +536,8 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => {
   // Same pattern as onFileActivity, onToolEvent, terminal.onData — proven IPC flow.
   const projectNameRef = useRef(projectName);
   projectNameRef.current = projectName;
+  const projectPathRef = useRef(projectPath);
+  projectPathRef.current = projectPath;
 
   useEffect(() => {
     let toolHandlersModule: typeof import('../mcp/tool-handlers') | null = null;
@@ -567,7 +569,7 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => {
               api,
               toolName as McpToolName,
               req.params,
-              { projectName: projectNameRef.current || undefined },
+              { projectName: projectNameRef.current || undefined, projectPath: projectPathRef.current || undefined },
             );
             window.prowl.mcp.sendResult(requestId, result);
           } catch (err) {

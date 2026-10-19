@@ -13,7 +13,7 @@
     "dist:mac": "electron-vite build && npm run build:mcp && electron-builder --mac",
     "dist:win": "electron-vite build && npm run build:mcp && electron-builder --win",
     "dist:linux": "electron-vite build && npm run build:mcp && electron-builder --linux",
-    "build:mcp": "esbuild electron/mcp-server/index.ts --bundle --platform=node --target=node18 --format=esm --outfile=dist/mcp-server.js --external:@modelcontextprotocol/sdk",
+    "build:mcp": "esbuild electron/mcp-server/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/mcp-server.js --external:@modelcontextprotocol/sdk && esbuild electron/mcp-server/review-widget.ts --bundle --platform=browser --target=es2022 --format=iife --minify --outfile=dist/review-widget.js",
     "postinstall": "npx @electron/rebuild -w node-pty && node scripts/patch-react-syntax-highlighter.cjs"
   },
   "dependencies": {
@@ -25,7 +25,9 @@
     "@langchain/langgraph": "^1.1.0",
     "@langchain/ollama": "^1.2.0",
     "@langchain/openai": "^1.2.2",
-    "@modelcontextprotocol/sdk": "^1.26.0",
+    "@modelcontextprotocol/ext-apps": "^2.0.3",
+    "@modelcontextprotocol/node": "^2.1.1",
+    "@modelcontextprotocol/server": "^2.3.1",
     "@monaco-editor/react": "^4.7.0",
     "@sigma/edge-curve": "^3.1.0",
     "@tailwindcss/vite": "^4.1.18",
@@ -71,7 +73,7 @@
     "vite-plugin-wasm": "^3.5.0",
     "web-tree-sitter": "^0.20.8",
     "ws": "^8.19.0",
-    "zod": "^3.25.76"
+    "zod": "^4.2.0"
   },
   "devDependencies": {
     "@babel/types": "^7.28.5",

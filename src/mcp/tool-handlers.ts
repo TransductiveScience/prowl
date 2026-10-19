@@ -46,6 +46,7 @@ export async function executeMcpTool(
   params: unknown,
   extra?: {
     projectName?: string;
+    projectPath?: string;
     chatMessages?: Array<{ role: string; content: string }>;
   },
 ): Promise<McpToolResponse> {
@@ -66,6 +67,7 @@ async function dispatch(
   params: unknown,
   extra?: {
     projectName?: string;
+    projectPath?: string;
     chatMessages?: Array<{ role: string; content: string }>;
   },
 ): Promise<unknown> {
@@ -77,6 +79,8 @@ async function dispatch(
       return {
         ready,
         projectName: extra?.projectName || 'unknown',
+        projectPath: extra?.projectPath ?? null,
+        pathScope: 'host-running-prowl',
         nodes: stats.nodes,
         edges: stats.edges,
         agentReady,

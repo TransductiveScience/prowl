@@ -1,0 +1,200 @@
+{
+  "acceptance": {
+    "chatgpt_ui": {
+      "receipt": null,
+      "status": "planned"
+    },
+    "event_consumer": {
+      "receipt": null,
+      "status": "planned"
+    },
+    "mcp_wire": {
+      "receipt": "receipts/mcp-wire-20261019.json",
+      "status": "verified"
+    },
+    "oauth_or_auth": {
+      "receipt": "receipts/mcp-wire-20261019.json",
+      "status": "verified"
+    },
+    "performance": {
+      "receipt": null,
+      "status": "planned"
+    },
+    "readback": {
+      "receipt": "receipts/mcp-ledger-20261019.json",
+      "status": "verified"
+    },
+    "rollback": {
+      "receipt": null,
+      "status": "planned"
+    },
+    "tool_roundtrip": {
+      "receipt": "receipts/mcp-wire-20261019.json",
+      "status": "verified"
+    },
+    "ui_resource": {
+      "receipt": "receipts/mcp-wire-20261019.json",
+      "status": "verified"
+    }
+  },
+  "endpoint_plan": "Authenticated HTTPS ingress on prowl.torsionfield.de to host-local /mcp, with per-user OAuth before shared deployment. Not deployed.",
+  "features": {
+    "accessibility": {
+      "reason": "Widget uses semantic controls and keyboard focus; full host/screen-reader audit outstanding.",
+      "receipt": null,
+      "status": "planned"
+    },
+    "caching_and_routing": {
+      "reason": "Modern MCP SDK supplies conservative ttlMs 0/private; route metrics and cache safety not benchmarked.",
+      "receipt": null,
+      "status": "planned"
+    },
+    "chatgpt_composer_mentions": {
+      "reason": "Composer mentions and discovery were not exercised in a ChatGPT client.",
+      "receipt": null,
+      "status": "planned"
+    },
+    "chatgpt_deep_links": {
+      "reason": "Prowl has a prowl:// deep-link handler, not a verified ChatGPT extension.",
+      "receipt": null,
+      "status": "planned"
+    },
+    "chatgpt_display_modes": {
+      "reason": "Default MCP Apps iframe only; no host display-mode switching.",
+      "receipt": null,
+      "status": "planned"
+    },
+    "chatgpt_extended_context": {
+      "reason": "No ChatGPT extended-context bridge implemented.",
+      "receipt": null,
+      "status": "planned"
+    },
+    "chatgpt_extended_sending": {
+      "reason": "No extended sending bridge; tool calls remain the control channel.",
+      "receipt": null,
+      "status": "planned"
+    },
+    "chatgpt_file_viewer_editor": {
+      "reason": "Prowl has its own local code viewer; no ChatGPT-hosted file editor extension.",
+      "receipt": null,
+      "status": "planned"
+    },
+    "chatgpt_onboarding": {
+      "reason": "No ChatGPT-specific onboarding flow deployed.",
+      "receipt": null,
+      "status": "planned"
+    },
+    "chatgpt_plugin_settings": {
+      "reason": "App settings are inside Electron; no ChatGPT plugin settings extension.",
+      "receipt": null,
+      "status": "planned"
+    },
+    "chatgpt_rich_forms": {
+      "reason": "Review widget is read-only and does not require a form.",
+      "receipt": null,
+      "status": "planned"
+    },
+    "chatgpt_sidebar": {
+      "reason": "No globally registered ChatGPT sidebar surface; review is a per-tool MCP Apps iframe.",
+      "receipt": null,
+      "status": "planned"
+    },
+    "chatgpt_thread_panel": {
+      "reason": "No ChatGPT conversation-thread extension registered.",
+      "receipt": null,
+      "status": "planned"
+    },
+    "headless_parity": {
+      "reason": "Structured tool data is available without the UI.",
+      "receipt": "receipts/mcp-wire-20261019.json",
+      "status": "implemented"
+    },
+    "integration_and_recovery": {
+      "reason": "Idempotent durable event ledger and recoverable investigation IDs; no cross-host push execution.",
+      "receipt": "receipts/mcp-ledger-20261019.json",
+      "status": "implemented"
+    },
+    "latency_benchmark": {
+      "reason": "Build and functional smoke tests exist, but p50/p95 measurement is not implemented.",
+      "receipt": null,
+      "status": "planned"
+    },
+    "machine_scope": {
+      "reason": "prowl_status exposes host-running-prowl pathScope and projectPath from active renderer.",
+      "receipt": "src/mcp/tool-handlers.ts",
+      "status": "implemented"
+    },
+    "mcp_apps_host_bridge": {
+      "reason": "MCP Apps App.connect/callServerTool used for review refresh; ChatGPT host run not yet tested.",
+      "receipt": "electron/mcp-server/review-widget.ts",
+      "status": "implemented"
+    },
+    "mcp_apps_ui_resource": {
+      "reason": "ui:// review HTML served and embedded widget bundle built; host UI launch not yet tested.",
+      "receipt": "receipts/mcp-wire-20261019.json",
+      "status": "implemented"
+    },
+    "mcp_events": {
+      "reason": "Renderer IPC publishes coding events; ChatGPT webhook events/list/subscribe and callback acceptance are not implemented.",
+      "receipt": null,
+      "status": "planned"
+    },
+    "oauth_identity": {
+      "reason": "Development bearer token only; OAuth per-user resource consent and DCR remain unimplemented.",
+      "receipt": null,
+      "status": "planned"
+    },
+    "prompts": {
+      "reason": "prowl_dc_coding registered and prompts/get tested.",
+      "receipt": "receipts/mcp-wire-20261019.json",
+      "status": "implemented"
+    },
+    "protocol_2026_07_28": {
+      "reason": "Modern server/discover exchange verified with _meta envelope and header.",
+      "receipt": "receipts/mcp-wire-20261019.json",
+      "status": "implemented"
+    },
+    "resources": {
+      "reason": "resources/list and resources/read verified for ui://.",
+      "receipt": "receipts/mcp-wire-20261019.json",
+      "status": "implemented"
+    },
+    "server_discover": {
+      "reason": "Modern discovery method returns supportedVersions 2026-07-28.",
+      "receipt": "receipts/mcp-wire-20261019.json",
+      "status": "implemented"
+    },
+    "task_status_cancel": {
+      "reason": "Application-level polling and cancel-request tools exist, but native MCP Tasks extension is not implemented.",
+      "receipt": null,
+      "status": "planned"
+    },
+    "telemetry_tracing": {
+      "reason": "No durable traceparent-aware distributed telemetry yet.",
+      "receipt": null,
+      "status": "planned"
+    },
+    "test_receipts": {
+      "reason": "Local protocol and ledger receipts exist; live ChatGPT acceptance is outstanding.",
+      "receipt": null,
+      "status": "planned"
+    },
+    "typed_tools": {
+      "reason": "18 typed registered tools and annotations verified.",
+      "receipt": "receipts/mcp-wire-20261019.json",
+      "status": "implemented"
+    },
+    "write_confirmation": {
+      "reason": "Change events require receipt or exitCode for tested/verified phases.",
+      "receipt": "receipts/mcp-ledger-20261019.json",
+      "status": "implemented"
+    }
+  },
+  "host": "host:i9es",
+  "name": "Prowl",
+  "platform": "chatgpt-native-mcp-app",
+  "protocol_version": "2026-07-28",
+  "schema_version": 1,
+  "source_branch": "feat/prowl-mcp-2026-protocol",
+  "ui_use_case": "Inspect coding-action evidence, affected file paths, stage, test exit codes and receipts in a live ChatGPT MCP Apps panel; headless tools remain usable."
+}

@@ -21,6 +21,7 @@ import { join } from 'path'
 import { homedir } from 'os'
 import { ipcMain } from 'electron'
 import type { BrowserWindow } from 'electron'
+import { CodingLedger } from './mcp-change-ledger'
 
 const PROWL_DIR = join(homedir(), '.prowl')
 const PORT_FILE = join(PROWL_DIR, 'mcp-port')
@@ -34,7 +35,7 @@ const DISPATCH_INTERVAL_MS = 50
 const VALID_TOOLS = new Set<McpToolName>([
   'search', 'cypher', 'grep', 'read-file', 'overview', 'explore',
   'impact', 'get-context', 'get-hotspots', 'chat-history', 'ask',
-  'investigate', 'status',
+  'investigate', 'status', 'change-event', 'change-history',
 ])
 
 interface QueuedRequest {
@@ -47,6 +48,7 @@ export async function startMcpHttpServer(
   getMainWindow: () => BrowserWindow | null,
 ): Promise<{ port: number; token: string; close: () => Promise<void> }> {
   const token = randomUUID()
+  const codingLedger = new CodingLedger()
 
   const pendingRequests = new Map<string, {
     resolve: (value: unknown) => void
@@ -159,6 +161,23 @@ export async function startMcpHttpServer(
           res.end(JSON.stringify({ error: 'Invalid JSON body' }))
           return
         }
+      }
+
+      if (toolName === 'change-event' || toolName === 'change-history') {
+        const operation = toolName === 'change-event'
+          ? codingLedger.record(body, getMainWindow())
+          : codingLedger.history((body as { limit?: number } | null)?.limit)
+        operation.then((data) => {
+          res.writeHead(200)
+          res.end(JSON.stringify({ success: true, data }))
+        }).catch((error: unknown) => {
+          res.writeHead(400)
+          res.end(JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : String(error),
+          }))
+        })
+        return
       }
 
       callRenderer(toolName, body)

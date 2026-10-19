@@ -1,0 +1,16 @@
+{
+  "passed": true,
+  "protocol": "2025-06-18",
+  "count": 18,
+  "appUri": "ui://prowl/coding-review.html",
+  "checks": [
+    "authentication",
+    "legacy-initialize",
+    "modern-server-discover",
+    "tools/list",
+    "annotations",
+    "resources/list",
+    "resources/read",
+    "job-status"
+  ]
+}

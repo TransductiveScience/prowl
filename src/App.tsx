@@ -48,11 +48,29 @@ const AppContent = () => {
     loadSnapshot,
     incrementalUpdate,
     projectPath: currentProjectPath,
+    graph,
+    setHighlightedNodeIds,
+    triggerNodeAnimation,
   } = useAppState();
 
   const graphCanvasRef = useRef<GraphCanvasHandle>(null);
   const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>('chat');
   const [isRoadmapOpen, setIsRoadmapOpen] = useState(false);
+
+  useEffect(() => {
+    if (!window.prowl?.onCodingEvent || !graph) return;
+    return window.prowl.onCodingEvent(event => {
+      const paths = event.files.map(p => p.replaceAll('\\', '/').toLowerCase());
+      const ids = graph.nodes.filter(n => paths.some(p => {
+        const path = String(n.properties?.filePath ?? '').replaceAll('\\', '/').toLowerCase();
+        return path === p || path.endsWith('/' + p);
+      })).map(n => n.id);
+      if (ids.length) {
+        setHighlightedNodeIds(new Set(ids));
+        triggerNodeAnimation(ids, 'watcher');
+      }
+    });
+  }, [graph, setHighlightedNodeIds, triggerNodeAnimation]);
 
   /* Folder path ref for the file watcher — kept in a ref to skip re-render deps */
   const pendingFolderPathRef = useRef<string | null>(null);
