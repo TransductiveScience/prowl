@@ -13,8 +13,8 @@
  * ~/.prowl/mcp-auth exist.
  */
 
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { serveStdio } from '@modelcontextprotocol/server/stdio'
+import { McpServer } from "@modelcontextprotocol/server";
 import { z } from 'zod'
 import { readFile } from 'fs/promises'
 import { join } from 'path'
@@ -131,37 +131,27 @@ export function createProwlServer(): McpServer {
 const server = new McpServer({
   name: 'prowl',
   version: '0.5.0',
+}, {
+  instructions: 'For coding tasks, call prowl_status first; its projectPath belongs to the machine running Prowl. Use prowl_search/impact to plan. Make edits and execute tests through the authorized DC-i9ES tools, verify readbacks, then record observed results with prowl_record_change. Use change_history and coding_review to inspect receipts. Never invent file changes or test success.',
 })
 
 // Tool: prowl_status — health check
-server.tool(
-  'prowl_status',
-  'Check if Prowl is running and has a project loaded.',
-  {},
-  async () => {
-    const data = await callProwlApi('status', {})
-    return textResult(data)
-  },
-)
+server.registerTool('prowl_status', { description: 'Check if Prowl is running and has a project loaded.', inputSchema: z.object({}) }, async () => {
+            const data = await callProwlApi('status', {})
+            return textResult(data)
+          })
 
 // Tool: prowl_search — hybrid keyword + semantic search
-server.tool(
-  'prowl_search',
-  'Search code by keyword and semantics. Returns symbols, files, clusters, and process context.',
-  {
-    query: z.string().describe('The concept or keyword to search for'),
-    limit: z.number().optional().describe('Max results (default: 10)'),
-  },
-  async (params) => {
-    const data = await callProwlApi('search', params)
-    return textResult(data)
-  },
-)
+server.registerTool('prowl_search', { description: 'Search code by keyword and semantics. Returns symbols, files, clusters, and process context.', inputSchema: z.object({
+            query: z.string().describe('The concept or keyword to search for'),
+            limit: z.number().optional().describe('Max results (default: 10)'),
+          }) }, async (params) => {
+            const data = await callProwlApi('search', params)
+            return textResult(data)
+          })
 
 // Tool: prowl_cypher — direct graph query
-server.tool(
-  'prowl_cypher',
-  `Run a Cypher query against the knowledge graph.
+server.registerTool('prowl_cypher', { description: `Run a Cypher query against the knowledge graph.
 
 Node tables: File, Folder, Function, Class, Interface, Method, CodeElement, Const, Struct, Enum
 Edge table: CodeEdge (single table — filter by type property)
@@ -179,142 +169,94 @@ WITH + ORDER BY must include LIMIT. Use label(n) to get node type.
 
 Examples:
   Files importing X: MATCH (f:File)-[e:CodeEdge]->(t:File) WHERE t.filePath CONTAINS 'X' AND e.type = 'IMPORTS' RETURN f.filePath
-  Functions in file: MATCH (n) WHERE n.filePath = 'src/foo.ts' AND label(n) <> 'File' RETURN n.name, label(n)`,
-  {
-    cypher: z.string().describe('Cypher statement to execute'),
-    query: z.string().optional().describe('Natural-language query (needed when cypher uses {{QUERY_VECTOR}})'),
-  },
-  async (params) => {
-    const data = await callProwlApi('cypher', params)
-    return textResult(data)
-  },
-)
+  Functions in file: MATCH (n) WHERE n.filePath = 'src/foo.ts' AND label(n) <> 'File' RETURN n.name, label(n)`, inputSchema: z.object({
+            cypher: z.string().describe('Cypher statement to execute'),
+            query: z.string().optional().describe('Natural-language query (needed when cypher uses {{QUERY_VECTOR}})'),
+          }) }, async (params) => {
+            const data = await callProwlApi('cypher', params)
+            return textResult(data)
+          })
 
 // Tool: prowl_grep — regex search across indexed files
-server.tool(
-  'prowl_grep',
-  'Regex search across all indexed source files. Best for exact strings, TODOs, error messages.',
-  {
-    pattern: z.string().describe('Regex to match'),
-    fileFilter: z.string().optional().describe('Restrict to files whose path contains this substring'),
-    caseSensitive: z.boolean().optional().describe('Match case exactly (default: false)'),
-    maxResults: z.number().optional().describe('Result cap (default: 100)'),
-  },
-  async (params) => {
-    const data = await callProwlApi('grep', params)
-    return textResult(data)
-  },
-)
+server.registerTool('prowl_grep', { description: 'Regex search across all indexed source files. Best for exact strings, TODOs, error messages.', inputSchema: z.object({
+            pattern: z.string().describe('Regex to match'),
+            fileFilter: z.string().optional().describe('Restrict to files whose path contains this substring'),
+            caseSensitive: z.boolean().optional().describe('Match case exactly (default: false)'),
+            maxResults: z.number().optional().describe('Result cap (default: 100)'),
+          }) }, async (params) => {
+            const data = await callProwlApi('grep', params)
+            return textResult(data)
+          })
 
 // Tool: prowl_read_file — read full source
-server.tool(
-  'prowl_read_file',
-  'Read the full source code of a file from the indexed project. Supports fuzzy path matching.',
-  {
-    filePath: z.string().describe('File path (partial paths resolved automatically)'),
-  },
-  async (params) => {
-    const data = await callProwlApi('read-file', params)
-    return textResult(data)
-  },
-)
+server.registerTool('prowl_read_file', { description: 'Read the full source code of a file from the indexed project. Supports fuzzy path matching.', inputSchema: z.object({
+            filePath: z.string().describe('File path (partial paths resolved automatically)'),
+          }) }, async (params) => {
+            const data = await callProwlApi('read-file', params)
+            return textResult(data)
+          })
 
 // Tool: prowl_overview — high-level codebase map
-server.tool(
-  'prowl_overview',
-  'Get a high-level map of the codebase: clusters, processes, cross-cluster dependencies.',
-  {},
-  async () => {
-    const data = await callProwlApi('overview', {})
-    return textResult(data)
-  },
-)
+server.registerTool('prowl_overview', { description: 'Get a high-level map of the codebase: clusters, processes, cross-cluster dependencies.', inputSchema: z.object({}) }, async () => {
+            const data = await callProwlApi('overview', {})
+            return textResult(data)
+          })
 
 // Tool: prowl_explore — drill into a symbol, cluster, or process
-server.tool(
-  'prowl_explore',
-  'Drill into a specific symbol, cluster, or process. Returns members, process participation, and connections.',
-  {
-    target: z.string().describe('Name or ID of the symbol, cluster, or process'),
-    type: z.enum(['symbol', 'cluster', 'process']).optional().describe('Target kind hint (auto-detected when omitted)'),
-  },
-  async (params) => {
-    const data = await callProwlApi('explore', params)
-    return textResult(data)
-  },
-)
+server.registerTool('prowl_explore', { description: 'Drill into a specific symbol, cluster, or process. Returns members, process participation, and connections.', inputSchema: z.object({
+            target: z.string().describe('Name or ID of the symbol, cluster, or process'),
+            type: z.enum(['symbol', 'cluster', 'process']).optional().describe('Target kind hint (auto-detected when omitted)'),
+          }) }, async (params) => {
+            const data = await callProwlApi('explore', params)
+            return textResult(data)
+          })
 
 // Tool: prowl_impact — change-impact analysis
-server.tool(
-  'prowl_impact',
-  `Change-impact analysis (blast radius) for a function, class, or file.
-Direction: upstream = what CALLS/IMPORTS this (breakage risk); downstream = what this depends on.`,
-  {
-    target: z.string().describe('Function, class, or file to analyze'),
-    direction: z.enum(['upstream', 'downstream']).describe('upstream = consumers; downstream = dependencies'),
-    maxDepth: z.number().optional().describe('Traversal depth (default: 3, max: 10)'),
-    relationTypes: z.array(z.string()).optional().describe('Edge types: CALLS, IMPORTS, EXTENDS, IMPLEMENTS'),
-    includeTests: z.boolean().optional().describe('Include test files (default: false)'),
-    minConfidence: z.number().optional().describe('Confidence floor 0-1 (default: 0.7)'),
-  },
-  async (params) => {
-    const data = await callProwlApi('impact', params)
-    return textResult(data)
-  },
-)
+server.registerTool('prowl_impact', { description: `Change-impact analysis (blast radius) for a function, class, or file.
+Direction: upstream = what CALLS/IMPORTS this (breakage risk); downstream = what this depends on.`, inputSchema: z.object({
+            target: z.string().describe('Function, class, or file to analyze'),
+            direction: z.enum(['upstream', 'downstream']).describe('upstream = consumers; downstream = dependencies'),
+            maxDepth: z.number().optional().describe('Traversal depth (default: 3, max: 10)'),
+            relationTypes: z.array(z.string()).optional().describe('Edge types: CALLS, IMPORTS, EXTENDS, IMPLEMENTS'),
+            includeTests: z.boolean().optional().describe('Include test files (default: false)'),
+            minConfidence: z.number().optional().describe('Confidence floor 0-1 (default: 0.7)'),
+          }) }, async (params) => {
+            const data = await callProwlApi('impact', params)
+            return textResult(data)
+          })
 
 // Tool: prowl_context — project-level context (stats, hotspots, tree)
-server.tool(
-  'prowl_context',
-  'Get project-level context: file counts, symbol stats, hotspots, and directory tree.',
-  {
-    projectName: z.string().optional().describe('Project name (auto-detected if omitted)'),
-  },
-  async (params) => {
-    const data = await callProwlApi('get-context', params)
-    return textResult(data)
-  },
-)
+server.registerTool('prowl_context', { description: 'Get project-level context: file counts, symbol stats, hotspots, and directory tree.', inputSchema: z.object({
+            projectName: z.string().optional().describe('Project name (auto-detected if omitted)'),
+          }) }, async (params) => {
+            const data = await callProwlApi('get-context', params)
+            return textResult(data)
+          })
 
 // Tool: prowl_hotspots — most connected symbols
-server.tool(
-  'prowl_hotspots',
-  'Get the most connected symbols (hotspots) in the codebase.',
-  {
-    limit: z.number().optional().describe('Number of hotspots to return (default: 10)'),
-  },
-  async (params) => {
-    const data = await callProwlApi('get-hotspots', params)
-    return textResult(data)
-  },
-)
+server.registerTool('prowl_hotspots', { description: 'Get the most connected symbols (hotspots) in the codebase.', inputSchema: z.object({
+            limit: z.number().optional().describe('Number of hotspots to return (default: 10)'),
+          }) }, async (params) => {
+            const data = await callProwlApi('get-hotspots', params)
+            return textResult(data)
+          })
 
 // Tool: prowl_ask — one-shot agent query
-server.tool(
-  'prowl_ask',
-  'Ask Prowl\'s AI agent a question about the codebase. The agent has access to all analysis tools internally.',
-  {
-    question: z.string().describe('Question about the codebase'),
-  },
-  async (params) => {
-    const data = await callProwlApi('ask', params)
-    return textResult(data)
-  },
-)
+server.registerTool('prowl_ask', { description: 'Ask Prowl\'s AI agent a question about the codebase. The agent has access to all analysis tools internally.', inputSchema: z.object({
+            question: z.string().describe('Question about the codebase'),
+          }) }, async (params) => {
+            const data = await callProwlApi('ask', params)
+            return textResult(data)
+          })
 
 // Tool: prowl_investigate — multi-step agent investigation
-server.tool(
-  'prowl_investigate',
-  'Run a thorough, multi-step investigation. The agent uses multiple tools to research a task systematically.',
-  {
-    task: z.string().describe('Investigation task description'),
-    depth: z.number().optional().describe('Max investigation steps (default: 5)'),
-  },
-  async (params) => {
-    const data = await callProwlApi('investigate', params)
-    return textResult(data)
-  },
-)
+server.registerTool('prowl_investigate', { description: 'Run a thorough, multi-step investigation. The agent uses multiple tools to research a task systematically.', inputSchema: z.object({
+            task: z.string().describe('Investigation task description'),
+            depth: z.number().optional().describe('Max investigation steps (default: 5)'),
+          }) }, async (params) => {
+            const data = await callProwlApi('investigate', params)
+            return textResult(data)
+          })
 
 registerCodingTools(server, callProwlApi)
 return server
@@ -326,7 +268,7 @@ async function main(): Promise<void> {
   if (process.argv.includes('--http')) {
     await serveProwlMcpHttp(createProwlServer)
   } else {
-    await createProwlServer().connect(new StdioServerTransport())
+    await serveStdio(createProwlServer)
   }
 }
 

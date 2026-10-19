@@ -1,0 +1,1 @@
+{"passed":true,"checks":["concurrent-idempotence","single-durable-write","restart-recovery","idempotency-conflict"]}

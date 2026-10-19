@@ -1,4 +1,5 @@
 /// <reference types="vite/client" />
+import type {} from "../electron/preload"
 
 /* Prowl — Electron desktop app type augmentations */
 

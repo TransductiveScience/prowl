@@ -46,6 +46,7 @@ export class CodingLedger {
   private events: CodingEvent[] = []
   private ids = new Map<string, CodingEvent>()
   private ready: Promise<void> | null = null
+  private writeQueue: Promise<void> = Promise.resolve()
 
   private initialize(): Promise<void> {
     if (!this.ready) this.ready = (async () => {
@@ -67,7 +68,13 @@ export class CodingLedger {
     return this.ready
   }
 
-  async record(value: unknown, window: BrowserWindow | null): Promise<{ accepted: boolean; duplicate: boolean; event: CodingEvent; deliveredToRenderer: boolean }> {
+  record(value: unknown, window: BrowserWindow | null): Promise<{ accepted: boolean; duplicate: boolean; event: CodingEvent; deliveredToRenderer: boolean }> {
+    const pending = this.writeQueue.then(() => this.recordExclusive(value, window))
+    this.writeQueue = pending.then(() => undefined, () => undefined)
+    return pending
+  }
+
+  private async recordExclusive(value: unknown, window: BrowserWindow | null): Promise<{ accepted: boolean; duplicate: boolean; event: CodingEvent; deliveredToRenderer: boolean }> {
     await this.initialize()
     const input = validate(value)
     const previous = this.ids.get(input.eventId)

@@ -1,4 +1,4 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import type { McpServer } from "@modelcontextprotocol/server";
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -19,29 +19,29 @@ export function registerCodingTools(server: McpServer, api: Api): void {
   server.registerTool('prowl_record_change', {
     title: 'Record coding action',
     description: 'Record an observed edit or test performed through DC-i9ES. This logs evidence and highlights graph nodes; it does not write code. Reuse eventId on retry.',
-    inputSchema: {
-      eventId: z.string().min(8).max(128),
-      phase: z.enum(['planned', 'modified', 'tested', 'verified', 'failed']),
-      files: z.array(z.string().min(1).max(500)).max(100),
-      description: z.string().min(1).max(600),
-      command: z.string().max(500).optional(),
-      exitCode: z.number().int().optional(),
-      receipt: z.string().max(1000).optional(),
-    },
+    inputSchema: z.object({
+          eventId: z.string().min(8).max(128),
+          phase: z.enum(['planned', 'modified', 'tested', 'verified', 'failed']),
+          files: z.array(z.string().min(1).max(500)).max(100),
+          description: z.string().min(1).max(600),
+          command: z.string().max(500).optional(),
+          exitCode: z.number().int().optional(),
+          receipt: z.string().max(1000).optional(),
+        }),
     annotations: { readOnlyHint: false, idempotentHint: true, openWorldHint: false },
   }, async (params) => respond(await api('change-event', params)))
 
   server.registerTool('prowl_change_history', {
     title: 'Coding change history',
     description: 'Read recent coding actions, modified files, and observed test results.',
-    inputSchema: { limit: z.number().int().min(1).max(100).optional() },
+    inputSchema: z.object({ limit: z.number().int().min(1).max(100).optional() }),
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, async (params) => respond(await api('change-history', params)))
 
   server.registerTool('prowl_coding_review', {
     title: 'Interactive coding review',
     description: 'Open interactive Prowl change history with file lists, stages, and test receipts.',
-    inputSchema: { limit: z.number().int().min(1).max(100).optional() },
+    inputSchema: z.object({ limit: z.number().int().min(1).max(100).optional() }),
     annotations: { readOnlyHint: true, openWorldHint: false },
     _meta: { ui: { resourceUri: uri } },
   }, async (params) => respond(await api('change-history', params)))
@@ -73,11 +73,11 @@ small{opacity:.72}code{font:12px ui-monospace,monospace;overflow-wrap:anywhere}
   server.registerTool('prowl_start_investigation', {
     title: 'Start code investigation',
     description: 'Start a code investigation and return a stable job ID immediately. Poll prowl_job_status.',
-    inputSchema: {
-      task: z.string().min(1),
-      depth: z.number().int().min(1).max(15).optional(),
-      requestKey: z.string().min(4).max(128).optional(),
-    },
+    inputSchema: z.object({
+          task: z.string().min(1),
+          depth: z.number().int().min(1).max(15).optional(),
+          requestKey: z.string().min(4).max(128).optional(),
+        }),
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   }, async ({ task, depth, requestKey }) =>
     respond(await startJob('investigate', requestKey, () => api('investigate', { task, depth }))))
@@ -85,14 +85,30 @@ small{opacity:.72}code{font:12px ui-monospace,monospace;overflow-wrap:anywhere}
   server.registerTool('prowl_job_status', {
     title: 'Investigation job status',
     description: 'Retrieve a durable code investigation result by ID.',
-    inputSchema: { id: z.string() },
+    inputSchema: z.object({ id: z.string() }),
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, async ({ id }) => respond({ job: await readJob(id) }))
 
   server.registerTool('prowl_job_cancel', {
     title: 'Request investigation cancellation',
     description: 'Request cancellation without pretending the renderer computation stopped.',
-    inputSchema: { id: z.string() },
+    inputSchema: z.object({ id: z.string() }),
     annotations: { readOnlyHint: false, idempotentHint: true, openWorldHint: false },
   }, async ({ id }) => respond({ job: await requestCancellation(id) }))
+
+  server.registerPrompt('prowl_dc_coding', {
+    title: 'Prowl and DC-i9ES coding workflow',
+    description: 'Guide a ChatGPT coding task through graph analysis, host edits, receipts and verification.',
+    argsSchema: z.object({ goal: z.string().min(1).max(1000) }),
+  }, ({ goal }) => ({
+    messages: [{ role: 'user' as const, content: { type: 'text' as const,
+      text: `Implement this coding goal: ${goal}. First call prowl_status to inspect the indexed
+project and host-specific path, then use prowl_search and prowl_impact for context.
+Use the actual authorized DC-i9ES or other host file tools for edits, file readback
+and build/test execution. Obtain concrete exit codes and receipts before calling
+prowl_record_change with a stable eventId and the changed repository-relative paths.
+Verify the Prowl graph reflects the changes, then report tests and remaining risk.
+Never claim Prowl itself executed the change or confuse the Prowl and DC host paths.`
+    } }],
+  }))
 }
