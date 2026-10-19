@@ -1,0 +1,107 @@
+{
+  "passed": true,
+  "protocol": "2025-06-18",
+  "count": 18,
+  "modern": {
+    "protocol": "2026-07-28",
+    "count": 18,
+    "requests": [
+      {
+        "method": "server/discover",
+        "protocolVersion": "2026-07-28",
+        "metadataKeys": [
+          "io.modelcontextprotocol/protocolVersion",
+          "io.modelcontextprotocol/clientCapabilities",
+          "io.modelcontextprotocol/clientInfo"
+        ],
+        "status": 200,
+        "responseId": 2
+      },
+      {
+        "method": "tools/list",
+        "protocolVersion": "2026-07-28",
+        "metadataKeys": [
+          "io.modelcontextprotocol/protocolVersion",
+          "io.modelcontextprotocol/clientCapabilities",
+          "io.modelcontextprotocol/clientInfo"
+        ],
+        "status": 200,
+        "responseId": 3
+      },
+      {
+        "method": "tools/call",
+        "name": "prowl_job_status",
+        "protocolVersion": "2026-07-28",
+        "metadataKeys": [
+          "io.modelcontextprotocol/protocolVersion",
+          "io.modelcontextprotocol/clientCapabilities",
+          "io.modelcontextprotocol/clientInfo"
+        ],
+        "status": 200,
+        "responseId": 4
+      }
+    ],
+    "tool": "prowl_job_status",
+    "result": {
+      "job": null
+    }
+  },
+  "acceptance": {
+    "localProtocol": "passed",
+    "httpsIngress": "unverified",
+    "productionOAuth": "unverified",
+    "chatgptHost": "unverified"
+  },
+  "appUri": "ui://prowl/coding-review.html",
+  "checks": [
+    "authentication",
+    "legacy-initialize",
+    "modern-server-discover",
+    "modern-tools/list",
+    "modern-tools/call",
+    "legacy-tools/list",
+    "legacy-tools/call",
+    "annotations",
+    "resources/list",
+    "resources/read",
+    "job-status"
+  ],
+  "execution": {
+    "utc": "2026-10-19T14:32:20.140357+00:00",
+    "node": "v26.0.0",
+    "sourceBase": "9c2e5b02f7da4ca52ef0bcedee9e53775359c383",
+    "endpoint": "http://127.0.0.1:32117/mcp",
+    "serverCommand": "node dist/mcp-server.js --http",
+    "testCommand": "node scripts/mcp-smoke.mjs",
+    "reproduction": "docs/CHATGPT-DC-CODING.md#reproduce-the-complete-local-protocol-check",
+    "exitCode": 0,
+    "checks": [
+      {
+        "command": "npm run build:mcp",
+        "exitCode": 0
+      },
+      {
+        "command": "npx tsc --noEmit -p tsconfig.node.json",
+        "exitCode": 0
+      },
+      {
+        "command": "node --check scripts/mcp-smoke.mjs",
+        "exitCode": 0
+      },
+      {
+        "command": "git diff --check",
+        "exitCode": 0
+      },
+      {
+        "command": "python3 /mnt/SERVE/CODEX-UNIFIED/bin/mcp_app_gate.py check /mnt/SERVE/CODEX-UNIFIED/projects/Systems/MCP/Prowl --phase design",
+        "exitCode": 0
+      }
+    ],
+    "sha256": {
+      "scripts/mcp-smoke.mjs": "e0a4571a621e8494f5419a5676b4197a61992b937b8a2261199650a742e66b02",
+      "dist/mcp-server.js": "8c81da4f186306f93a61b72750fd27de78a386953cdcbe6858b870f663b66b12",
+      "dist/review-widget.js": "6527ecf38e59504f45ed91303720638671ccba9a303ed83d9c4c094d45ac8d04",
+      "package-lock.json": "c563a1b9a22131b8f1a326132eb105e15663f82f5b2b22efed30ffa7f728ce9a"
+    }
+  }
+}
